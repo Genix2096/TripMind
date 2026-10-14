@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -111,6 +112,10 @@ class Layover(BaseModel):
 
 class FlightOption(BaseModel):
     option_id: str = Field(description="Local identifier within one search; not a provider fact.")
+    direction: Literal["outbound", "return"] | None = Field(
+        default=None,
+        description="Which searched leg produced this option. Set by the search orchestration, not by the provider.",
+    )
     segments: list[FlightSegment] = Field(default_factory=list)
     layovers: list[Layover] = Field(default_factory=list)
     total_duration_minutes: int | None = None

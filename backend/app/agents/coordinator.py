@@ -65,6 +65,9 @@ class PlanningCoordinator:
                 out_req = req.model_copy()
                 out_req.return_date = None
                 res = await self.flights.search(out_req, authorizer)
+                for i, item in enumerate(res.items):
+                    item.option_id = f"outbound-flight-{i}"
+                    item.direction = "outbound"
 
                 # If there's a return date, search return leg separately as one-way
                 if has_return:
@@ -75,6 +78,9 @@ class PlanningCoordinator:
                     ret_req.return_date = None
                     try:
                         ret_res = await self.flights.search(ret_req, authorizer)
+                        for i, item in enumerate(ret_res.items):
+                            item.option_id = f"return-flight-{i}"
+                            item.direction = "return"
                         res.items.extend(ret_res.items)
                     except Exception as e:
                         logger.warning(f"Return flight search failed: {e!s}")

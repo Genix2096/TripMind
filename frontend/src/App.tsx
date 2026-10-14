@@ -1,48 +1,109 @@
-import React, { useState } from 'react';
-import { Plane, Calendar, MapPin, Sparkles, Loader2, Info, Navigation, CloudSun, CreditCard, CheckCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  Plane,
+  Sparkles,
+  Loader2,
+  Info,
+  Navigation,
+  CloudSun,
+  CreditCard,
+  CheckCircle,
+  History,
+  Trash2,
+  Compass,
+  Layers,
+} from 'lucide-react';
+import type { TravelPackage, StructuredItinerary } from './types';
+import { PackageCard } from './components/PackageCard';
+import { PackageDetails } from './components/PackageDetails';
+import { LegacyItinerary } from './components/LegacyItinerary';
+import {
+  buildHistoryEntry,
+  clearActiveState,
+  isPackage,
+  loadActiveState,
+  loadHistory,
+  normalizeSavedTrip,
+  sanitizePackages,
+  saveActiveState,
+  saveHistory,
+} from './storage';
+
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:8000';
 
 interface TripFormProps {
-  onSubmit: (request: str) => void;
+  onSubmit: (request: string) => void;
   isLoading: boolean;
 }
 
 const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
   const [request, setRequest] = useState('');
 
+  const samplePrompts = [
+    "Plan a 5-day trip to Tokyo next month with a $3,000 budget for 2 adults.",
+    "Honeymoon in Paris for 7 days starting next week, budget $4,500, love boutique hotels.",
+    "Weekend getaway from New York to Miami for 2 travelers, $1,500 budget.",
+  ];
+
   return (
-    <div className="w-full max-w-2xl mx-auto p-8 rounded-3xl bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl shadow-2xl border border-gray-200 dark:border-gray-700">
-      <h2 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-500 mb-6 flex items-center gap-3">
-        <Sparkles className="w-8 h-8 text-purple-500" />
-        Dream Your Next Trip
-      </h2>
-      <div className="space-y-6">
+    <div className="w-full max-w-3xl mx-auto p-8 rounded-3xl bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl shadow-2xl border border-gray-200/80 dark:border-gray-700/80">
+      <div className="flex items-center gap-3 mb-2">
+        <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white shadow-md">
+          <Sparkles className="w-6 h-6" />
+        </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          <h2 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+            Dream Your Next Trip
+          </h2>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            TripMind builds up to 4 selectable packages from real flight and hotel results
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-4 mt-6">
+        <div>
+          <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-2">
             Describe your ideal trip in natural language
           </label>
-          <textarea 
-            rows={5}
-            className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 focus:ring-4 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all resize-none text-gray-900 dark:text-gray-100"
-            placeholder="e.g., I want to go from New York to London for a week starting next Monday. It's my honeymoon and my budget is $5000. We love historic sites and nice hotels."
+          <textarea
+            rows={4}
+            className="w-full px-4 py-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 focus:ring-4 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all resize-none text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400"
+            placeholder="e.g., I want to travel from New York to London for 5 days starting next Monday. My budget is $3,500. We prefer direct flights and central hotels."
             value={request}
             onChange={(e) => setRequest(e.target.value)}
           />
         </div>
-        
+
+        {/* Suggestion Chips */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-semibold text-gray-400">Suggestions:</span>
+          {samplePrompts.map((prompt, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setRequest(prompt)}
+              className="text-[11px] px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-purple-50 dark:bg-gray-750 dark:hover:bg-purple-950/40 text-gray-600 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-300 border border-gray-200 dark:border-gray-700 transition-colors"
+            >
+              {prompt.split(',')[0]}...
+            </button>
+          ))}
+        </div>
+
         <button
           onClick={() => onSubmit(request)}
           disabled={!request.trim() || isLoading}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="w-full py-4 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-700 hover:via-indigo-700 hover:to-blue-700 text-white font-bold text-base shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {isLoading ? (
             <>
-              <Loader2 className="w-6 h-6 animate-spin" />
-              Planning...
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Building travel packages...
             </>
           ) : (
             <>
-              <Plane className="w-6 h-6" />
-              Plan My Trip
+              <Compass className="w-5 h-5" />
+              Explore Travel Packages
             </>
           )}
         </button>
@@ -59,36 +120,41 @@ interface ProgressEvent {
 
 const StageIcon = ({ stage }: { stage: string }) => {
   switch (stage) {
-    case 'understanding': return <Info className="w-5 h-5" />;
-    case 'flight_research': return <Plane className="w-5 h-5" />;
-    case 'hotel_research': return <MapPin className="w-5 h-5" />;
-    case 'attractions': return <Sparkles className="w-5 h-5" />;
-    case 'routing': return <Navigation className="w-5 h-5" />;
-    case 'weather': return <CloudSun className="w-5 h-5" />;
-    case 'budget': return <CreditCard className="w-5 h-5" />;
-    case 'synthesis': return <CheckCircle className="w-5 h-5" />;
-    default: return <Loader2 className="w-5 h-5 animate-spin" />;
+    case 'understanding': return <Info className="w-4 h-4" />;
+    case 'flight_research': return <Plane className="w-4 h-4" />;
+    case 'hotel_research': return <Layers className="w-4 h-4" />;
+    case 'attractions': return <Sparkles className="w-4 h-4" />;
+    case 'routing': return <Navigation className="w-4 h-4" />;
+    case 'weather': return <CloudSun className="w-4 h-4" />;
+    case 'budget': return <CreditCard className="w-4 h-4" />;
+    case 'synthesis': return <CheckCircle className="w-4 h-4" />;
+    default: return <Loader2 className="w-4 h-4 animate-spin" />;
   }
 };
 
-const PlanningProgress = ({ events, isComplete }: { events: ProgressEvent[], isComplete: boolean }) => {
+const PlanningProgress = ({ events, isComplete }: { events: ProgressEvent[]; isComplete: boolean }) => {
   return (
-    <div className="w-full max-w-2xl mx-auto mt-8 space-y-4">
+    <div className="w-full max-w-2xl mx-auto mt-8 space-y-3">
       {events.map((e, idx) => (
-        <div key={idx} className="p-4 rounded-2xl bg-white dark:bg-gray-800 shadow-sm flex items-start gap-4 animate-in slide-in-from-bottom-2 fade-in duration-300">
-          <div className="p-2 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-xl">
+        <div
+          key={idx}
+          className="p-3.5 rounded-2xl bg-white dark:bg-gray-800 shadow-sm border border-gray-100 dark:border-gray-700/80 flex items-center gap-3.5 animate-in slide-in-from-bottom-2 fade-in duration-300"
+        >
+          <div className="p-2 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-xl shrink-0">
             <StageIcon stage={e.stage} />
           </div>
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100 capitalize">{e.stage.replace('_', ' ')}</h3>
-            <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">{e.message}</p>
+          <div className="flex-1 min-w-0">
+            <h4 className="font-bold text-xs text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+              {e.stage.replace('_', ' ')}
+            </h4>
+            <p className="text-gray-600 dark:text-gray-300 text-xs mt-0.5 truncate">{e.message}</p>
           </div>
         </div>
       ))}
       {!isComplete && events.length > 0 && (
         <div className="p-4 flex items-center justify-center gap-2 text-gray-500">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="text-sm">Working...</span>
+          <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
+          <span className="text-xs font-semibold">Working...</span>
         </div>
       )}
     </div>
@@ -96,156 +162,309 @@ const PlanningProgress = ({ events, isComplete }: { events: ProgressEvent[], isC
 };
 
 export default function App() {
+  // Restore the active (possibly customised) results once, validated and versioned.
+  const [initial] = useState(() => loadActiveState());
+
   const [isLoading, setIsLoading] = useState(false);
   const [events, setEvents] = useState<ProgressEvent[]>([]);
-  const [isComplete, setIsComplete] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  
+  const [isComplete, setIsComplete] = useState(!!initial);
+
+  // Core results state
+  const [itinerary, setItinerary] = useState<StructuredItinerary | null>(initial?.itinerary ?? null);
+  const [packages, setPackages] = useState<TravelPackage[]>(initial?.packages ?? []);
+  const [packageNotes, setPackageNotes] = useState<string[]>(initial?.packageNotes ?? []);
+  const [tripState, setTripState] = useState<any>(initial?.tripState ?? null);
+  const [sessionId, setSessionId] = useState<string | null>(initial?.sessionId ?? null);
+  const [isLegacy, setIsLegacy] = useState(false);
+
+  // Active view: null for comparison screen, or package_id string for details view
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(initial?.selectedPackageId ?? null);
+
+  // Option-change state (all changes are validated and recalculated by the backend)
+  const [updatingPackageId, setUpdatingPackageId] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [sessionLost, setSessionLost] = useState(false);
+  const [restored, setRestored] = useState(!!initial);
+
+  // Clarification state
+  const [tripStateForClarification, setTripStateForClarification] = useState<any>(null);
+  const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
+
   // Local storage history
-  const [savedTrips, setSavedTrips] = useState<any[]>(() => {
-    const saved = localStorage.getItem('agentTrip_history');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [savedTrips, setSavedTrips] = useState<any[]>(() => loadHistory());
+
+  // Keep the active results (including selections) across refreshes.
+  useEffect(() => {
+    if (!itinerary && packages.length === 0) return;
+    saveActiveState({ sessionId, itinerary, packages, packageNotes, tripState, selectedPackageId });
+  }, [itinerary, packages, packageNotes, tripState, sessionId, selectedPackageId]);
+
+  const resetResults = () => {
+    clearActiveState();
+    setPackages([]);
+    setItinerary(null);
+    setPackageNotes([]);
+    setSessionId(null);
+    setSelectedPackageId(null);
+    setSelectionError(null);
+    setSessionLost(false);
+    setRestored(false);
+    setIsLegacy(false);
+    setEvents([]);
+    setIsComplete(false);
+  };
 
   const saveTrip = () => {
-    if (!result) return;
-    const newTrip = {
-      id: Date.now().toString(),
-      date: new Date().toISOString(),
-      itinerary: result
-    };
-    const updated = [newTrip, ...savedTrips];
-    setSavedTrips(updated);
-    localStorage.setItem('agentTrip_history', JSON.stringify(updated));
-    alert('Trip saved locally!');
+    if (!itinerary && packages.length === 0) return;
+    const updated = [buildHistoryEntry({ sessionId, itinerary, packages, packageNotes, tripState }), ...savedTrips];
+    if (saveHistory(updated)) {
+      setSavedTrips(updated);
+      alert('Trip saved locally!');
+    } else {
+      alert('Could not save: browser storage is full or unavailable.');
+    }
   };
 
-  const deleteTrip = (id: string) => {
-    const updated = savedTrips.filter(t => t.id !== id);
-    setSavedTrips(updated);
-    localStorage.setItem('agentTrip_history', JSON.stringify(updated));
-  };
-
-  const loadTrip = (trip: any) => {
-    setResult(trip.itinerary);
+  const loadTrip = (saved: any) => {
+    const n = normalizeSavedTrip(saved);
+    if (!n.itinerary && n.packages.length === 0) {
+      alert('This saved trip is in an unsupported format and could not be loaded.');
+      return;
+    }
+    setItinerary(n.itinerary);
+    setPackages(n.packages);
+    setPackageNotes(n.packageNotes);
+    setTripState(n.tripState);
+    setSessionId(n.sessionId);
+    setIsLegacy(n.isLegacy);
+    setSelectedPackageId(null);
+    setSelectionError(null);
+    setSessionLost(false);
+    setRestored(true);
     setEvents([]);
     setIsComplete(true);
   };
 
-  const [tripStateForClarification, setTripStateForClarification] = useState<any>(null);
-  const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
-
   const handleSubmit = async (request: string, existingState: any = null) => {
     setIsLoading(true);
     if (!existingState) {
-        setEvents([]);
+      setEvents([]);
     }
     setIsComplete(false);
-    setResult(null);
+    // A new search replaces all stored results so stale selections can never mix with the new trip.
+    clearActiveState();
+    setItinerary(null);
+    setPackages([]);
+    setPackageNotes([]);
+    setSessionId(null);
+    setSelectedPackageId(null);
+    setSelectionError(null);
+    setSessionLost(false);
+    setRestored(false);
+    setIsLegacy(false);
     setClarificationQuestion(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/plan', {
+      const response = await fetch(`${API_BASE}/api/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            request, 
-            existing_state: existingState ? JSON.stringify(existingState) : null 
+        body: JSON.stringify({
+          request,
+          existing_state: existingState ? JSON.stringify(existingState) : null,
         }),
       });
-      
+
       const { session_id } = await response.json();
-      
-      const eventSource = new EventSource(`http://localhost:8000/api/plan/${session_id}/stream`);
-      
+      const eventSource = new EventSource(`${API_BASE}/api/plan/${session_id}/stream`);
+
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        setEvents(prev => [...prev, data]);
-        
+        setEvents((prev) => [...prev, data]);
+
+        if (data.stage === 'understanding' && data.data?.trip_state) {
+          setTripState(data.data.trip_state);
+        }
+
         if (data.stage === 'completed' || data.stage === 'error' || data.stage === 'clarification_needed') {
           eventSource.close();
           setIsComplete(true);
           setIsLoading(false);
-          
+
           if (data.stage === 'completed') {
-            setResult(data.data.itinerary);
+            const itin: StructuredItinerary = data.data.itinerary;
+            setItinerary(itin);
+            // Packages are delivered once, inside the itinerary payload.
+            setPackages(sanitizePackages(itin?.packages));
+            setPackageNotes(Array.isArray(itin?.package_notes) ? itin.package_notes : []);
+            setSessionId(typeof data.data.session_id === 'string' ? data.data.session_id : session_id);
           } else if (data.stage === 'clarification_needed') {
             setClarificationQuestion(data.message);
             if (data.data?.trip_state) {
-                setTripStateForClarification(data.data.trip_state);
+              setTripStateForClarification(data.data.trip_state);
             }
           }
         }
       };
-      
+
       eventSource.onerror = () => {
         eventSource.close();
         setIsComplete(true);
         setIsLoading(false);
-        setEvents(prev => [...prev, { stage: 'error', message: 'Connection to server lost.' }]);
+        setEvents((prev) => [...prev, { stage: 'error', message: 'Connection to server lost.' }]);
       };
-      
-    } catch (e) {
+    } catch {
       setIsLoading(false);
       setIsComplete(true);
-      setEvents(prev => [...prev, { stage: 'error', message: 'Failed to start planning session.' }]);
+      setEvents((prev) => [...prev, { stage: 'error', message: 'Failed to start planning session.' }]);
     }
   };
 
+  // Change a package's flight/hotel. Only IDs are sent; the backend validates them against the options
+  // that belong to that package, recomputes budget + itinerary from trusted data, and returns the package.
+  const changeSelection = async (
+    pkgId: string,
+    patch: { outbound_flight_id?: string; return_flight_id?: string; hotel_id?: string }
+  ) => {
+    if (!sessionId || sessionLost) {
+      setSelectionError('Options can only be changed while the original search session is active. Run the search again.');
+      return;
+    }
+    setUpdatingPackageId(pkgId);
+    setSelectionError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/plan/package/recalculate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, package_id: pkgId, ...patch }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (isPackage(data?.package) && data.package.package_id === pkgId) {
+          // Replace only the package that changed; the others are untouched.
+          setPackages((prev) => prev.map((p) => (p.package_id === pkgId ? data.package : p)));
+          setRestored(false);
+        } else {
+          setSelectionError('The server returned an unexpected response. Your selection was not changed.');
+        }
+      } else {
+        let detail: any = null;
+        try {
+          detail = (await res.json())?.detail;
+        } catch {
+          /* non-JSON error body */
+        }
+        if (detail?.code === 'session_not_found' || detail?.code === 'session_expired') {
+          setSessionLost(true);
+        }
+        setSelectionError(detail?.message || `The option could not be changed (HTTP ${res.status}).`);
+      }
+    } catch {
+      setSelectionError('Could not reach the server. Your selection was not changed.');
+    } finally {
+      setUpdatingPackageId(null);
+    }
+  };
+
+  const activePackage = packages.find((p) => p.package_id === selectedPackageId);
+  const hasResult = !!itinerary || packages.length > 0;
+  const selectionDisabledReason = sessionLost
+    ? 'The search session has expired or the server was restarted, so options can no longer be changed. Run the search again.'
+    : !sessionId
+    ? 'No active search session is available for this trip, so options cannot be changed.'
+    : null;
+  const providerProblems = Object.values(itinerary?.provider_statuses ?? {}).filter(
+    (s) => s && ['error', 'unavailable', 'empty'].includes(s.status)
+  );
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8">
-      <header className="max-w-6xl mx-auto mb-12 flex justify-between items-center">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Plane className="w-8 h-8 text-purple-600" />
-          AgentTrip
-        </h1>
+    <div className="min-h-screen bg-slate-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-4 sm:p-8">
+      {/* Top Navbar */}
+      <header className="max-w-7xl mx-auto mb-10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b border-gray-200/80 dark:border-gray-800">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg">
+            <Plane className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-500 tracking-tight">
+              TripMind
+            </h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+              Multi-Package Autonomous Travel Orchestrator
+            </p>
+          </div>
+        </div>
+
+        {/* Saved Trips Selector */}
         {savedTrips.length > 0 && (
-          <div className="flex gap-2">
-            <select 
-              className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm"
-              onChange={(e) => {
-                if (e.target.value) {
-                  const trip = savedTrips.find(t => t.id === e.target.value);
-                  if (trip) loadTrip(trip);
-                  e.target.value = ""; // reset
-                }
-              }}
-            >
-              <option value="">Load Saved Trip...</option>
-              {savedTrips.map(t => (
-                <option key={t.id} value={t.id}>{new Date(t.date).toLocaleDateString()}</option>
-              ))}
-            </select>
-            <button 
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm text-xs">
+              <History className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                className="bg-transparent border-none outline-none text-xs font-semibold text-gray-700 dark:text-gray-200"
+                onChange={(e) => {
+                  if (e.target.value) {
+                    const trip = savedTrips.find((t) => t.id === e.target.value);
+                    if (trip) loadTrip(trip);
+                    e.target.value = '';
+                  }
+                }}
+              >
+                <option value="">Load Past Trip ({savedTrips.length})...</option>
+                {savedTrips.map((t) => {
+                  let dateLabel = 'Past Trip';
+                  try {
+                    if (t.date) {
+                      const d = new Date(t.date);
+                      if (!isNaN(d.getTime())) dateLabel = d.toLocaleDateString();
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                  const destination = t.tripState?.destination || 'Trip';
+                  return (
+                    <option key={t.id} value={t.id}>
+                      {dateLabel} — {destination}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <button
               onClick={() => {
-                if (confirm('Clear all saved trips?')) {
+                if (confirm('Clear all saved trip collections?')) {
                   setSavedTrips([]);
-                  localStorage.removeItem('agentTrip_history');
+                  saveHistory([]);
                 }
               }}
-              className="text-red-500 text-sm font-medium hover:underline px-3 py-2"
+              className="p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors"
+              title="Clear Saved History"
             >
-              Clear All
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         )}
       </header>
-      
-      <main className="max-w-6xl mx-auto">
-        {!result && (
-          <TripForm onSubmit={handleSubmit} isLoading={isLoading} />
-        )}
-        
-        {(events.length > 0 && !result) && (
+
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto">
+        {/* Form View when no result */}
+        {!hasResult && <TripForm onSubmit={handleSubmit} isLoading={isLoading} />}
+
+        {/* Progress & Clarification During Run */}
+        {events.length > 0 && !hasResult && (
           <div className="flex flex-col space-y-6">
             <PlanningProgress events={events} isComplete={isComplete} />
+
             {clarificationQuestion && (
-              <div className="w-full max-w-2xl mx-auto p-6 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 shadow-md">
-                <h3 className="text-xl font-bold text-amber-800 dark:text-amber-300 mb-2 flex items-center gap-2">
-                  <Info className="w-6 h-6" /> Need More Info
+              <div className="w-full max-w-2xl mx-auto p-6 rounded-3xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 shadow-xl">
+                <h3 className="text-lg font-bold text-amber-800 dark:text-amber-300 mb-2 flex items-center gap-2">
+                  <Info className="w-5 h-5 text-amber-600" /> Clarification Needed
                 </h3>
-                <p className="text-gray-700 dark:text-gray-300 mb-4">{clarificationQuestion}</p>
-                <form 
+                <p className="text-sm text-gray-700 dark:text-gray-300 mb-4 leading-relaxed">
+                  {clarificationQuestion}
+                </p>
+                <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     const form = e.target as HTMLFormElement;
@@ -256,17 +475,17 @@ export default function App() {
                   }}
                   className="flex gap-2"
                 >
-                  <input 
+                  <input
                     name="reply"
-                    type="text" 
-                    placeholder="Type your reply here..." 
-                    className="flex-1 px-4 py-3 rounded-xl bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 focus:ring-2 focus:ring-amber-500 outline-none text-gray-900 dark:text-gray-100"
+                    type="text"
+                    placeholder="Provide details here..."
+                    className="flex-1 px-4 py-3 rounded-xl bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-700 focus:ring-2 focus:ring-amber-500 outline-none text-sm text-gray-900 dark:text-gray-100"
                     autoFocus
                   />
-                  <button 
-                    type="submit" 
+                  <button
+                    type="submit"
                     disabled={isLoading}
-                    className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold transition-colors disabled:opacity-50"
+                    className="px-6 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm transition-colors disabled:opacity-50"
                   >
                     Reply
                   </button>
@@ -275,134 +494,143 @@ export default function App() {
             )}
           </div>
         )}
-        
-        {result && typeof result === 'object' && (
-          <div className="w-full max-w-4xl mx-auto space-y-8 relative">
-            <div className="absolute top-4 right-4 flex gap-2">
-               <button 
-                onClick={saveTrip}
-                className="px-4 py-2 bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 rounded-lg text-sm font-semibold hover:bg-purple-200 dark:hover:bg-purple-800/50 transition-colors shadow-sm"
-              >
-                Save Locally
-              </button>
-            </div>
-            
-            <div className="p-8 rounded-3xl bg-white dark:bg-gray-800 shadow-xl">
-              <h2 className="text-3xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-blue-500">Your Itinerary</h2>
-              <p className="text-lg text-gray-700 dark:text-gray-300 mb-8 leading-relaxed">
-                {result.trip_summary}
-              </p>
-              
-              {result.validation_warnings && result.validation_warnings.length > 0 && (
-                <div className="mb-8 p-4 bg-orange-50 dark:bg-orange-900/30 rounded-xl border border-orange-200 dark:border-orange-800">
-                  <h3 className="font-semibold text-orange-800 dark:text-orange-300 flex items-center gap-2 mb-2">
-                    <Info className="w-5 h-5" /> Important Notes
-                  </h3>
-                  <ul className="list-disc pl-5 text-orange-700 dark:text-orange-400 space-y-1">
-                    {result.validation_warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
-                  </ul>
+
+        {/* Itinerary exists but there are no valid packages (older saved trip, zero packages, provider failures) */}
+        {packages.length === 0 && itinerary && (
+          <LegacyItinerary itinerary={itinerary} notes={packageNotes} isLegacy={isLegacy} onReset={resetResults} />
+        )}
+
+        {/* RESULTS: Travel Packages */}
+        {packages.length > 0 && (
+          <div>
+            {/* View A: Comparison View */}
+            {!(selectedPackageId && activePackage) && (
+              <div className="space-y-8 animate-in fade-in duration-300">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 rounded-full text-xs font-black bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase tracking-wider">
+                        {packages.length} {packages.length === 1 ? 'Package' : 'Packages'} Ready
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        Destination: <strong className="text-gray-800 dark:text-gray-200">{tripState?.destination || 'Requested'}</strong>
+                      </span>
+                    </div>
+                    <h2 className="text-3xl font-black text-gray-900 dark:text-white mt-1 tracking-tight">
+                      Compare Travel Packages
+                    </h2>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-2xl leading-relaxed">
+                      Each package shows its own budget status, calculated from the provider quotes for its selected flights and hotel. Open one to review the itinerary and swap flight or hotel options.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={saveTrip}
+                      className="px-4 py-2.5 rounded-xl bg-purple-100 hover:bg-purple-200 dark:bg-purple-900/40 dark:hover:bg-purple-800/60 text-purple-700 dark:text-purple-300 font-bold text-xs transition-colors"
+                    >
+                      Save All Packages
+                    </button>
+                    <button
+                      onClick={resetResults}
+                      className="px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 font-bold text-xs transition-colors"
+                    >
+                      Plan New Trip
+                    </button>
+                  </div>
                 </div>
-              )}
-              
-              <div className="space-y-6">
-                <h3 className="text-2xl font-bold border-b border-gray-100 dark:border-gray-700 pb-2">Daily Plan</h3>
-                {result.day_wise && result.day_wise.map((day: any, idx: number) => (
-                  <div key={idx} className="bg-gray-50 dark:bg-gray-700/50 p-6 rounded-2xl">
-                    <h4 className="text-xl font-bold mb-2 flex items-center justify-between">
-                      <span>Day {idx + 1}: {day.title}</span>
-                      {day.date && <span className="text-sm font-normal text-gray-500 dark:text-gray-400">{new Date(day.date).toLocaleDateString()}</span>}
-                    </h4>
-                    {day.weather_summary && (
-                      <p className="text-sm text-blue-600 dark:text-blue-400 mb-4 flex items-center gap-1">
-                        <CloudSun className="w-4 h-4" /> {day.weather_summary}
-                      </p>
-                    )}
-                    
-                    <ul className="space-y-4">
-                      {day.activities.map((act: any, i: number) => (
-                        <li key={i} className="flex items-start gap-3 bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm">
-                          <span className="mt-1.5 w-2.5 h-2.5 rounded-full bg-purple-500 shrink-0"></span>
-                          <div className="flex-1">
-                            <h5 className="font-bold text-gray-900 dark:text-gray-100">{act.name}</h5>
-                            {act.description && <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">{act.description}</p>}
-                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
-                              {act.location && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {act.location}</span>}
-                              {act.time_window && <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> {act.time_window}</span>}
-                              {act.travel_info && <span className="flex items-center gap-1"><Navigation className="w-3.5 h-3.5" /> {act.travel_info}</span>}
-                            </div>
-                          </div>
-                        </li>
+
+                {restored && (
+                  <div className="p-4 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-xs text-sky-900 dark:text-sky-200" role="status">
+                    Showing results restored from this browser. Changing options needs the original search session on the server; if it has expired you will be asked to run the search again.
+                  </div>
+                )}
+
+                {providerProblems.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200 space-y-1" role="status">
+                    <div className="font-bold">Partial results: some searches did not fully succeed</div>
+                    {providerProblems.map((s, i) => (
+                      <div key={i}>{s?.capability || 'Search'}: {s?.status}{s?.error_detail ? ` — ${s.error_detail}` : ''}</div>
+                    ))}
+                  </div>
+                )}
+
+                {packageNotes.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 flex items-start gap-3">
+                    <Info className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="text-xs text-indigo-900 dark:text-indigo-200 space-y-1">
+                      <span className="font-bold block">Package notes:</span>
+                      {packageNotes.map((note, i) => (
+                        <div key={i}>{note}</div>
                       ))}
-                    </ul>
-                    
-                    {day.missing_information && day.missing_information.length > 0 && (
-                      <div className="mt-4 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-xl">
-                        <strong>Note:</strong> {day.missing_information.join(", ")}
-                      </div>
-                    )}
+                    </div>
                   </div>
-                ))}
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {packages.map((pkg) => (
+                    <PackageCard
+                      key={pkg.package_id}
+                      pkg={pkg}
+                      onSelect={(pkgId) => setSelectedPackageId(pkgId)}
+                    />
+                  ))}
+                </div>
+
+                {itinerary?.provider_statuses && (
+                  <div className="p-6 rounded-2xl bg-gray-100/80 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800">
+                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                      Provider Search Status
+                    </h4>
+                    <div className="flex flex-wrap gap-3">
+                      {Object.values(itinerary.provider_statuses).filter(Boolean).map((s, i) => (
+                        <div key={i} className="flex flex-col gap-0.5">
+                          <span
+                            className={`text-xs px-2.5 py-1 rounded-full border w-fit font-medium ${
+                              s.status === 'success'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                                : s.status === 'error'
+                                ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+                                : 'bg-gray-100 text-gray-600 border-gray-300 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700'
+                            }`}
+                          >
+                            {s.capability}: {s.status}
+                          </span>
+                          {s.error_detail && (
+                            <span className="text-[10px] text-rose-500 max-w-[200px] truncate">
+                              {s.error_detail}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              
-              {result.flights && result.flights.length > 0 && (
-                <div className="mt-8">
-                  <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Plane className="w-5 h-5 text-blue-500" /> Flight Options</h3>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {result.flights.map((f: any) => (
-                      <div key={f.option_id} className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-                         <div className="font-semibold">{f.segments[0].departure.code} → {f.segments[f.segments.length-1].arrival.code}</div>
-                         <div className="text-sm text-gray-500 mt-1">{f.price ? `${f.price.currency === 'INR' ? '₹' : f.price.currency + ' '}${f.price.amount}` : "Price unknown"}</div>
-                         <div className="text-xs text-gray-400 mt-2">via {f.segments[0].airline}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {result.hotels && result.hotels.length > 0 && (
-                <div className="mt-8">
-                  <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><MapPin className="w-5 h-5 text-emerald-500" /> Hotel Options</h3>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {result.hotels.map((h: any, i: number) => (
-                      <div key={i} className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-                         <div className="font-semibold">{h.name}</div>
-                         <div className="text-sm text-gray-500 mt-1">{h.nightly_rate ? (h.nightly_rate.amount ? `${h.nightly_rate.amount.currency === 'INR' ? '₹' : h.nightly_rate.amount.currency + ' '}${h.nightly_rate.amount.amount} / night` : h.nightly_rate.display_text) : "Price unknown"}</div>
-                         <div className="text-xs text-gray-400 mt-2">{h.rating} stars</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {result.provider_statuses && (
-                <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-900 rounded-xl">
-                  <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">System Status</h4>
-                  <div className="flex flex-wrap gap-4">
-                    {Object.values(result.provider_statuses).map((s: any, i: number) => (
-                       <div key={i} className="flex flex-col gap-1">
-                         <span className={`text-xs px-2 py-1 rounded-full border w-fit ${s.status === 'success' ? 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:border-green-800' : s.status === 'error' ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:border-red-800' : 'bg-gray-200 text-gray-600 border-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:border-gray-600'}`}>
-                           {s.capability}: {s.status}
-                         </span>
-                         {s.error_detail && <span className="text-[10px] text-red-500 max-w-[200px] break-words leading-tight">{s.error_detail}</span>}
-                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              <div className="mt-8 pt-6 border-t border-gray-100 dark:border-gray-700">
-                <button 
-                  onClick={() => {
-                    setResult(null);
-                    setEvents([]);
-                    setIsComplete(false);
-                  }}
-                  className="px-6 py-3 bg-gray-100 dark:bg-gray-700 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors w-full sm:w-auto text-center"
-                >
-                  Plan Another Trip
-                </button>
-              </div>
-            </div>
+            )}
+
+            {/* View B: Detailed Inspection & Customization View for a Single Package */}
+            {selectedPackageId && activePackage && (
+              <PackageDetails
+                pkg={activePackage}
+                allPackages={packages}
+                onBack={() => {
+                  setSelectedPackageId(null);
+                  setSelectionError(null);
+                }}
+                onSwitchPackage={(newPkgId) => {
+                  setSelectedPackageId(newPkgId);
+                  setSelectionError(null);
+                }}
+                onSelectOutboundFlight={(id, f) => changeSelection(id, { outbound_flight_id: f.option_id })}
+                onSelectReturnFlight={(id, f) => changeSelection(id, { return_flight_id: f.option_id })}
+                onSelectHotel={(id, h) => changeSelection(id, { hotel_id: h.hotel_id })}
+                onSaveTrip={saveTrip}
+                isUpdating={updatingPackageId === activePackage.package_id}
+                selectionError={selectionError}
+                selectionDisabledReason={selectionDisabledReason}
+              />
+            )}
           </div>
         )}
       </main>

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import date, timedelta
@@ -28,6 +29,18 @@ from app.models.itinerary import (
     ProviderStatus,
     StructuredItinerary,
 )
+from app.models.packages import (
+    PackageRecalculateRequest,
+    PackageRecalculateResponse,
+    TravelPackage,
+)
+from app.models.trip import TripState
+from app.planning.packages import (
+    SelectionError,
+    build_travel_packages,
+    collect_hotel_names,
+    reselect_package,
+)
 
 router = APIRouter(tags=["planning"])
 
@@ -35,13 +48,33 @@ class PlanRequest(BaseModel):
     request: str
     existing_state: str | None = None
 
+# Package selections are re-validated against this server-side state; it is the only trusted source.
+SESSION_TTL_SECONDS = 6 * 60 * 60
+
+
 class SessionState:
     def __init__(self):
         self.queue = asyncio.Queue()
         self.completed = False
         self.result = None
+        self.created_at = time.time()
+        # Trusted, server-derived package state (never taken from the client).
+        self.trip_state: TripState | None = None
+        self.packages: dict[str, TravelPackage] = {}
+        self.base_day_wise: list[DayPlan] = []
+        self.hotel_names: set[str] = set()
+
+    @property
+    def expired(self) -> bool:
+        return time.time() - self.created_at > SESSION_TTL_SECONDS
 
 sessions: dict[str, SessionState] = {}
+
+
+def _prune_sessions() -> None:
+    """Drop finished sessions past their TTL so in-memory state stays bounded."""
+    for sid in [s for s, st in sessions.items() if st.completed and st.expired]:
+        sessions.pop(sid, None)
 
 
 def summarize_flight_item(item: Any) -> dict[str, Any]:
@@ -196,6 +229,9 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
                 pass
 
             
+        package_hotels: list[Any] = []
+        package_data_notes: list[str] = []
+
         async def tool_executor(call) -> str:
             res_str, actual_model, status = await coordinator.execute_tool(call, authorizer)
             if status.status != ProviderStatus.ERROR:
@@ -203,6 +239,18 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
                     provider_data["flights"].extend(actual_model.items)
                 elif status.capability == Capability.HOTELS and actual_model and hasattr(actual_model, "items"):
                     provider_data["hotels"].extend(actual_model.items)
+                    # Only hotels priced for the requested stay dates may feed package budgets.
+                    params = getattr(getattr(actual_model, "meta", None), "request_params", None) or {}
+                    got_in, got_out = params.get("check_in_date"), params.get("check_out_date")
+                    want_in = trip_state.departure_date.isoformat() if trip_state.departure_date else None
+                    want_out = trip_state.return_date.isoformat() if trip_state.return_date else None
+                    if (want_in and got_in and got_in != want_in) or (want_out and got_out and got_out != want_out):
+                        package_data_notes.append(
+                            f"{len(actual_model.items)} hotel result(s) were not used for packages: they were priced for "
+                            f"{got_in} to {got_out}, not the requested {want_in} to {want_out}."
+                        )
+                    else:
+                        package_hotels.extend(actual_model.items)
                 elif status.capability == Capability.PLACES and actual_model and hasattr(actual_model, "items"):
                     provider_data["places"].extend(actual_model.items)
             # Record status (preserve SUCCESS if earlier call succeeded and items were obtained)
@@ -429,6 +477,25 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
                     error_detail="No attractions returned by provider."
                 )
 
+        # Build deterministic travel packages from the results already fetched (no extra provider calls)
+        hotel_names = collect_hotel_names(provider_data["hotels"])
+        packages, package_notes = build_travel_packages(
+            trip_state=trip_state,
+            raw_flights=provider_data["flights"],
+            raw_hotels=package_hotels,
+            base_day_wise=day_wise,
+            base_trip_summary=trip_summary,
+            provider_statuses=provider_statuses,
+            data_notes=package_data_notes,
+            hotel_names=hotel_names,
+        )
+
+        # Trusted state used later to validate option selection by ID
+        session.trip_state = trip_state
+        session.packages = {p.package_id: p for p in packages}
+        session.base_day_wise = day_wise
+        session.hotel_names = hotel_names
+
         # Create StructuredItinerary
         itinerary = StructuredItinerary(
             trip_summary=trip_summary,
@@ -437,10 +504,16 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
             day_wise=day_wise,
             budget_report=b.model_dump(mode='json'),
             provider_statuses=provider_statuses,
-            validation_warnings=val_warnings
+            validation_warnings=val_warnings,
+            packages=packages,
+            package_notes=package_notes,
         )
         
-        await emit("completed", "Planning complete.", {"itinerary": itinerary.model_dump(mode='json')})
+        # Packages travel once, inside the itinerary payload.
+        await emit("completed", "Planning complete.", {
+            "itinerary": itinerary.model_dump(mode='json'),
+            "session_id": session_id,
+        })
         
     except Exception as e:  # noqa: BLE001
         await emit("error", f"An error occurred: {e!s}")
@@ -450,6 +523,7 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
 
 @router.post("/plan")
 async def start_planning(req: PlanRequest, background_tasks: BackgroundTasks, coordinator: PlanningCoordinator = Depends(get_coordinator)):  # noqa: B008
+    _prune_sessions()
     session_id = str(uuid.uuid4())
     sessions[session_id] = SessionState()
     background_tasks.add_task(run_planning_workflow, session_id, req.request, req.existing_state, coordinator)
@@ -470,3 +544,38 @@ async def stream_planning(session_id: str):
             yield f"data: {json.dumps(event)}\n\n"
             
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/plan/package/recalculate", response_model=PackageRecalculateResponse)
+async def recalculate_package(req: PackageRecalculateRequest):
+    """Change a package's selected flights/hotel by ID.
+
+    The client sends IDs only. Options, prices, trip dates, traveler count and budget come from the
+    server-side session; an ID that does not belong to the package is rejected. No provider is called.
+    """
+    session = sessions.get(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "Planning session not found. Run the search again to change options."})
+    if session.expired:
+        sessions.pop(req.session_id, None)
+        raise HTTPException(status_code=410, detail={"code": "session_expired", "message": "This planning session has expired. Run the search again to change options."})
+    if session.trip_state is None or not session.packages:
+        raise HTTPException(status_code=409, detail={"code": "packages_not_ready", "message": "This session has no packages to change."})
+    pkg = session.packages.get(req.package_id)
+    if pkg is None:
+        raise HTTPException(status_code=404, detail={"code": "package_not_found", "message": f"Package '{req.package_id}' does not exist in this session."})
+    try:
+        updated = reselect_package(
+            pkg,
+            session.trip_state,
+            session.base_day_wise,
+            session.hotel_names,
+            outbound_id=req.outbound_flight_id,
+            return_id=req.return_flight_id,
+            hotel_id=req.hotel_id,
+        )
+    except SelectionError as e:
+        raise HTTPException(status_code=422, detail={"code": "invalid_selection", "message": str(e)}) from e
+    session.packages[req.package_id] = updated
+    return PackageRecalculateResponse(package=updated)
+
