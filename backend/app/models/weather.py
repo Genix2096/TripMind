@@ -49,3 +49,25 @@ class WeatherForecast(BaseModel):
     covers_from: datetime | None = None
     covers_to: datetime | None = None
     provenance: Provenance
+
+
+class SeasonalWeatherEstimate(BaseModel):
+    """Season-based expected weather when travel dates exceed date-specific forecast horizon."""
+    status: str = Field(
+        default="forecast_and_seasonal_unavailable",
+        description="One of: 'forecast_available', 'forecast_unavailable_seasonal_available', 'forecast_and_seasonal_unavailable'."
+    )
+    destination: str
+    travel_month: str | None = None
+    season_name: str | None = None
+    typical_temp_min_c: float | None = None
+    typical_temp_max_c: float | None = None
+    precipitation_context: str | None = None
+    seasonal_caveats: list[str] = Field(default_factory=list)
+    data_source: str | None = None
+    reference_period: str | None = None
+    disclaimer: str = Field(
+        default="Typical weather for this time of year, never an actual date-specific forecast."
+    )
+    notes: list[str] = Field(default_factory=list)
+

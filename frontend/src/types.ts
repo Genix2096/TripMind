@@ -108,6 +108,16 @@ export interface BudgetReport {
   notes?: string[];
 }
 
+export type TripPace = 'RUSHED' | 'BALANCED' | 'SLOW';
+
+export interface StructuredTripPace {
+  pace: TripPace;
+  preference_source: 'explicitly_stated' | 'default_balanced' | 'inferred' | string;
+  raw_pace_phrase?: string;
+  summary_label?: string;
+  description?: string;
+}
+
 export interface TravelPackage {
   package_id: string;
   name: string;
@@ -133,12 +143,29 @@ export interface TravelPackage {
   warnings: string[];
   missing_items?: string[];
   provenance_summary?: Record<string, any>;
+  trip_pace?: TripPace;
+  pace_description?: string;
 }
 
 export interface ProviderResultStatus {
   capability: string;
   status: string;
   error_detail?: string;
+}
+
+export interface SeasonalWeatherEstimate {
+  status: 'forecast_available' | 'forecast_unavailable_seasonal_available' | 'forecast_and_seasonal_unavailable' | string;
+  destination: string;
+  travel_month?: string;
+  season_name?: string;
+  typical_temp_min_c?: number;
+  typical_temp_max_c?: number;
+  precipitation_context?: string;
+  seasonal_caveats?: string[];
+  data_source?: string;
+  reference_period?: string;
+  disclaimer?: string;
+  notes?: string[];
 }
 
 export interface StructuredItinerary {
@@ -151,4 +178,35 @@ export interface StructuredItinerary {
   validation_warnings?: string[];
   packages?: TravelPackage[];
   package_notes?: string[];
+  seasonal_weather?: SeasonalWeatherEstimate;
+}
+
+export interface StructuredAttractionPreferences {
+  primary_interests?: string[];
+  secondary_interests?: string[];
+  preference_source?: 'explicitly_stated' | 'default_balanced' | string;
+  raw_interest_phrases?: string[];
+  summary_label?: string;
+}
+
+export interface TripPreferences {
+  interests?: string[];
+  attraction_preferences?: StructuredAttractionPreferences;
+  hotel_category?: string;
+  food_preferences?: string[];
+  pace?: TripPace | string;
+  pace_preferences?: StructuredTripPace;
+}
+
+export interface TripState {
+  raw_request?: string;
+  origin?: string;
+  destination?: string;
+  departure_date?: string;
+  return_date?: string;
+  calendar_days?: number;
+  nights?: number;
+  budget?: { amount: number; currency: string; basis: string };
+  preferences?: TripPreferences;
+  clarification_question?: string;
 }

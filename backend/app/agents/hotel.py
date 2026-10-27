@@ -10,8 +10,9 @@ class HotelResearchAgent(Agent):
     @property
     def system_prompt(self) -> str:
         return (
-            "You are the Hotel Research Agent. Your job is to search for hotels using the provided tool, "
+            "You are the Hotel Research Agent. Your job is to search for hotels using search_hotels, "
             "respect the requested destination, dates, occupancy, budget, and preferences. "
+            "Pass the user's budget currency (e.g. 'INR') in the currency parameter of search_hotels. "
             "Compare the returned candidates, evaluate prices carefully, and return a summary. "
             "Do not invent hotels or prices."
         )

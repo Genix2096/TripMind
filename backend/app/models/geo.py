@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -32,6 +33,35 @@ class PlacesSearchRequest(BaseModel):
     radius_m: int = Field(default=10_000, ge=100, le=50_000)
     limit: int = Field(default=20, ge=1, le=50)
 
+    @field_validator("center", mode="before")
+    @classmethod
+    def _coerce_center(cls, v: Any) -> Any:
+        if isinstance(v, Coordinate):
+            return v
+        if isinstance(v, dict):
+            lat = v.get("lat") if "lat" in v else v.get("latitude")
+            lon = v.get("lon") if "lon" in v else v.get("longitude")
+            if lat is not None and lon is not None:
+                try:
+                    return {"lat": float(lat), "lon": float(lon)}
+                except (ValueError, TypeError) as exc:
+                    raise ValueError(f"coordinates must be numbers, got lat={lat!r}, lon={lon!r}") from exc
+            raise ValueError(
+                f"'center' object must contain numeric 'lat' and 'lon' coordinates, got keys: {list(v.keys())}"
+            )
+        if isinstance(v, str):
+            if "," in v:
+                parts = [p.strip() for p in v.split(",", 1)]
+                try:
+                    return {"lat": float(parts[0]), "lon": float(parts[1])}
+                except ValueError:
+                    pass
+            raise ValueError(
+                f"'center' must be an object with numeric 'lat' and 'lon' fields (e.g. {{'lat': 35.6762, 'lon': 139.6503}}). "
+                f"Received string {v!r}. Destination coordinates from context should be used as the center object."
+            )
+        return v
+
     @field_validator("categories")
     @classmethod
     def _valid_categories(cls, v: list[str]) -> list[str]:
@@ -56,6 +86,7 @@ class Place(BaseModel):
     phone: str | None = None
     rating: float | None = None
     reviews_count: int | None = None
+    description: str | None = None
     missing_fields: list[str] = Field(default_factory=list)
     provenance: Provenance
 

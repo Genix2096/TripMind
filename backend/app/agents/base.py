@@ -31,6 +31,8 @@ class Agent:
         if user_message:
             messages.append({"role": "user", "content": user_message})
 
+        failed_call_signatures: set[str] = set()
+
         for _ in range(max_iterations):
             response = await self.llm.chat(
                 messages,
@@ -44,6 +46,16 @@ class Agent:
 
             if not response.tool_calls:
                 return response.content or ""
+
+            # Guard: If all proposed tool calls are identical repeats of already failed calls, stop immediately
+            current_call_signatures = [
+                f"{c.name}:{json.dumps(c.arguments, sort_keys=True, default=str)}"
+                for c in response.tool_calls
+            ]
+            if current_call_signatures and all(sig in failed_call_signatures for sig in current_call_signatures):
+                return (
+                    f"Agent stopped: repeated invalid tool call with unchanged arguments ({response.tool_calls[0].name})."
+                )
 
             # The model called tools. We append the tool call request to the history.
             messages.append(
@@ -65,13 +77,19 @@ class Agent:
             results = []
             has_error = False
             for call in response.tool_calls:
+                sig = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, default=str)}"
                 try:
                     result = await tool_executor(call)
                 except Exception as e:  # noqa: BLE001
                     result = f"Error executing {call.name}: {e}"
                 
-                if result.startswith("Error"):
+                if (
+                    result.startswith("Error")
+                    or result.startswith("Validation error")
+                    or result.startswith("Tool validation")
+                ):
                     has_error = True
+                    failed_call_signatures.add(sig)
                     
                 results.append(result)
                 messages.append(

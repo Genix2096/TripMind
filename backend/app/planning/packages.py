@@ -32,7 +32,19 @@ from app.models.day_plan import Activity, DayPlan
 from app.models.flights import FlightOption
 from app.models.hotels import HotelOption
 from app.models.packages import BudgetClassification, TravelPackage
-from app.models.trip import TripState
+from app.models.trip import (
+    AttractionPreferenceSource,
+    PacePreferenceSource,
+    TripPace,
+    TripState,
+)
+from app.planning.attractions import (
+    PackageAttractionPlan,
+    allocate_package_attractions,
+    extract_attraction_preferences,
+    rank_attractions,
+    schedule_package_activities,
+)
 from app.planning.budget import (
     BudgetReport,
     BudgetStatus,
@@ -140,8 +152,12 @@ def normalize_flights(
         expected = ts.departure_date if direction == "outbound" else ts.return_date
         d = _dep_date(f)
         if expected and d and d != expected:
-            date_mismatch += 1
-            continue
+            # If the search leg was executed for this date and the flight was returned by the provider,
+            # allow +/- 1 day boundary (e.g. flight departing near midnight or across timezone boundaries)
+            is_adjacent = abs((d - expected).days) <= 1
+            if not (f.direction and is_adjacent):
+                date_mismatch += 1
+                continue
         sig = _flight_signature(f)
         existing = buckets[direction].get(sig)
         if existing is None:
@@ -558,12 +574,42 @@ def _compose(
     *, pkg_id: str, name: str, desc: str, tier: str, ts: TripState, base_day_wise: list[DayPlan], base_summary: str,
     out: FlightOption | None, ret: FlightOption | None, hotel: HotelOption | None,
     out_alts: list[FlightOption], ret_alts: list[FlightOption], h_alts: list[HotelOption], hotel_names: set[str],
+    attraction_plan: PackageAttractionPlan | None = None,
+    pace: TripPace | None = None,
+    pace_description: str | None = None,
 ) -> TravelPackage:
     pb = calculate_package_budget(ts, out, ret, hotel)
     destination = ts.destination or "destination"
+    resolved_pace = pace or getattr(ts.preferences, "pace", TripPace.BALANCED)
+
+    if pace_description is None:
+        pref_pace = getattr(ts.preferences, "pace_preferences", None)
+        if pref_pace and getattr(pref_pace, "description", None):
+            resolved_pace_desc = pref_pace.description
+        else:
+            desc_map = {
+                TripPace.RUSHED: "High sightseeing density with 3-4 attractions per day and tighter scheduling.",
+                TripPace.BALANCED: "Comfortable pacing with 2-3 attractions per day, meal breaks, and downtime.",
+                TripPace.SLOW: "Relaxed pace with 1-2 attractions per day, longer visits, and generous free time.",
+            }
+            resolved_pace_desc = desc_map.get(resolved_pace, "Balanced sightseeing and leisure.")
+    else:
+        resolved_pace_desc = pace_description
+
+    # Deep copy base_day_wise to ensure each package gets an isolated day plan
+    working_days = copy.deepcopy(base_day_wise)
+    if attraction_plan and attraction_plan.allocated_places:
+        # Strip generic non-logistics activities from working_days so package-specific attractions are placed
+        for day in working_days:
+            day.activities = [a for a in day.activities if _is_logistics(a, hotel_names)]
+        schedule_package_activities(working_days, attraction_plan, destination, pace=resolved_pace)
+
     days, itin_warnings = adapt_itinerary_for_package(
-        base_day_wise, out, ret, hotel, destination, hotel_names, ts.departure_date, ts.return_date
+        working_days, out, ret, hotel, destination, hotel_names, ts.departure_date, ts.return_date
     )
+    theme_suffix = f" • Focus: {attraction_plan.theme_title}" if attraction_plan else ""
+    full_desc = f"{desc}{theme_suffix}"
+
     missing: list[str] = []
     if out is None:
         missing.append("outbound_flight")
@@ -584,15 +630,16 @@ def _compose(
     if hotel:
         prov["hotel"] = _prov(hotel)
     return TravelPackage(
-        package_id=pkg_id, name=name, description=desc, target_tier=tier,
+        package_id=pkg_id, name=name, description=full_desc, target_tier=tier,
         budget_classification=pb.classification,
         selected_outbound_flight=out, selected_return_flight=ret, selected_hotel=hotel,
         outbound_flight_alternatives=out_alts, return_flight_alternatives=ret_alts, hotel_alternatives=h_alts,
-        day_wise=days, trip_summary=f"{name}: {desc} {base_summary}".strip(),
+        day_wise=days, trip_summary=f"{name}: {full_desc} {base_summary}".strip(),
         budget_report=pb.report, total_cost=pb.total_cost, known_subtotal=pb.known_subtotal,
         remaining_budget=pb.remaining, amount_over_budget=pb.over, currency=currency,
         is_complete=pb.complete and not missing, completeness_status="complete" if pb.complete and not missing else "incomplete",
         warnings=[*itin_warnings, *pb.warnings], missing_items=missing, provenance_summary=prov,
+        trip_pace=resolved_pace, pace_description=resolved_pace_desc,
     )
 
 
@@ -629,15 +676,24 @@ def reselect_package(
     ret = choose(ret_pool, return_id, "option_id", pkg.selected_return_flight, "Return flight")
     hotel = choose(h_pool, hotel_id, "hotel_id", pkg.selected_hotel, "Hotel")
 
+    # Pass pkg.day_wise so this package's customized attractions are preserved across flight/hotel recalculations
     return _compose(
         pkg_id=pkg.package_id, name=pkg.name, desc=pkg.description, tier=pkg.target_tier, ts=ts,
-        base_day_wise=base_day_wise, base_summary="",
+        base_day_wise=pkg.day_wise, base_summary="",
         out=out, ret=ret, hotel=hotel,
         out_alts=[o for o in out_pool if out is None or o.option_id != out.option_id],
         ret_alts=[o for o in ret_pool if ret is None or o.option_id != ret.option_id],
         h_alts=[o for o in h_pool if hotel is None or o.hotel_id != hotel.hotel_id],
         hotel_names=hotel_names,
-    ).model_copy(update={"trip_summary": pkg.trip_summary})
+        attraction_plan=None,
+        pace=pkg.trip_pace,
+        pace_description=pkg.pace_description,
+    ).model_copy(update={
+        "trip_summary": pkg.trip_summary,
+        "description": pkg.description,
+        "trip_pace": pkg.trip_pace,
+        "pace_description": pkg.pace_description,
+    })
 
 
 def build_travel_packages(
@@ -649,6 +705,7 @@ def build_travel_packages(
     provider_statuses: dict[str, Any],
     data_notes: list[str] | None = None,
     hotel_names: set[str] | None = None,
+    raw_places: list[Any] | None = None,
 ) -> tuple[list[TravelPackage], list[str]]:
     """Build up to four distinct packages from already-fetched provider results.
 
@@ -665,6 +722,30 @@ def build_travel_packages(
         st = provider_statuses.get(cap)
         if st is not None and getattr(st.status, "value", st.status) in ("error", "unavailable"):
             notes.append(f"{cap.capitalize()} search {getattr(st.status, 'value', st.status)}: {st.error_detail or 'no detail'}.")
+
+    # Attraction preference and pace extraction
+    prefs = extract_attraction_preferences(ts)
+    resolved_pace = getattr(ts.preferences, "pace", TripPace.BALANCED)
+    hotel_coords = [h.coordinate for h in raw_hotels if getattr(h, "coordinate", None)]
+    center_coord = hotel_coords[0] if hotel_coords else None
+
+    ranked_places = rank_attractions(raw_places or [], prefs, center=center_coord)
+    cal_days = ts.calendar_days or (len(base_day_wise) if base_day_wise else 4)
+    attraction_plans = allocate_package_attractions(ranked_places, prefs, calendar_days=cal_days, pace=resolved_pace)
+
+    if prefs.preference_source == AttractionPreferenceSource.USER_EXPLICIT and prefs.primary_interests:
+        notes.append(f"Attractions personalized for your stated interests: {', '.join(prefs.primary_interests)}.")
+
+    pace_pref = getattr(ts.preferences, "pace_preferences", None)
+    if pace_pref and getattr(pace_pref, "preference_source", None) in (
+        PacePreferenceSource.USER_EXPLICIT,
+        PacePreferenceSource.EXPLICITLY_STATED,
+    ):
+        notes.append(f"Trip pacing tailored to your preference: {pace_pref.summary_label}.")
+
+    p1_plan = attraction_plans.get("package-1")
+    if p1_plan and p1_plan.variety_warning and p1_plan.variety_warning not in notes:
+        notes.append(p1_plan.variety_warning)
 
     outbounds, returns, flight_notes = normalize_flights(raw_flights, ts)
     notes += flight_notes
@@ -707,6 +788,8 @@ def build_travel_packages(
             desc="Incomplete package: one or more components were not available from the provider results.",
             tier="incomplete", ts=ts, base_day_wise=base_day_wise, base_summary=base_trip_summary,
             out=so, ret=sr, hotel=sh, out_alts=ao, ret_alts=ar, h_alts=ah, hotel_names=names,
+            attraction_plan=attraction_plans.get("package-1"),
+            pace=resolved_pace,
         )
         notes.append("Only a partial package could be built; it is not a complete or booking-ready trip.")
         return [pkg], notes
@@ -766,10 +849,14 @@ def build_travel_packages(
         chosen.append(c)
         n = len(packages) + 1
         ao, ar, ah = alts(c.out, c.ret, c.hotel)
+        pkg_id = f"package-{n}"
+        att_plan = attraction_plans.get(pkg_id)
         packages.append(_compose(
-            pkg_id=f"package-{n}", name=f"Package {n}: {role}", desc=desc, tier=tier, ts=ts,
+            pkg_id=pkg_id, name=f"Package {n}: {role}", desc=desc, tier=tier, ts=ts,
             base_day_wise=base_day_wise, base_summary=base_trip_summary,
             out=c.out, ret=c.ret, hotel=c.hotel, out_alts=ao, ret_alts=ar, h_alts=ah, hotel_names=names,
+            attraction_plan=att_plan,
+            pace=resolved_pace,
         ))
 
     n_within = sum(1 for p in packages if p.budget_classification == BudgetClassification.WITHIN_BUDGET)

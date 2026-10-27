@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -29,12 +31,25 @@ from app.models.itinerary import (
     ProviderStatus,
     StructuredItinerary,
 )
+from app.models.weather import SeasonalWeatherEstimate
 from app.models.packages import (
     PackageRecalculateRequest,
     PackageRecalculateResponse,
     TravelPackage,
 )
-from app.models.trip import TripState
+from app.models.trip import (
+    AttractionPreferenceSource,
+    PacePreferenceSource,
+    StructuredTripPace,
+    TripPace,
+    TripState,
+)
+from app.planning.attractions import (
+    extract_attraction_preferences,
+    extract_trip_pace,
+    rank_attractions,
+    recommend_search_categories,
+)
 from app.planning.packages import (
     SelectionError,
     build_travel_packages,
@@ -43,10 +58,12 @@ from app.planning.packages import (
 )
 
 router = APIRouter(tags=["planning"])
+logger = logging.getLogger("app.api.routes.planning")
 
 class PlanRequest(BaseModel):
     request: str
     existing_state: str | None = None
+    pace: str | None = None
 
 # Package selections are re-validated against this server-side state; it is the only trusted source.
 SESSION_TTL_SECONDS = 6 * 60 * 60
@@ -63,6 +80,7 @@ class SessionState:
         self.packages: dict[str, TravelPackage] = {}
         self.base_day_wise: list[DayPlan] = []
         self.hotel_names: set[str] = set()
+        self.raw_places: list[Any] = []
 
     @property
     def expired(self) -> bool:
@@ -170,7 +188,13 @@ def summarize_place_item(item: Any) -> dict[str, Any]:
     return summary
 
 
-async def run_planning_workflow(session_id: str, request_text: str, existing_state: str | None, coordinator: PlanningCoordinator):
+async def run_planning_workflow(
+    session_id: str,
+    request_text: str,
+    existing_state: str | None,
+    coordinator: PlanningCoordinator,
+    requested_pace: str | None = None,
+):
     session = sessions[session_id]
     
     async def emit(stage: str, message: str, data: dict | None = None):
@@ -204,7 +228,31 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
         except Exception as e:
             await emit("error", f"Understanding failed: {e!s}")
             return
-            
+
+        extract_attraction_preferences(trip_state)
+        extract_trip_pace(trip_state)
+        if requested_pace:
+            try:
+                parsed_pace = TripPace(requested_pace.strip().upper())
+                trip_state.preferences.pace = parsed_pace
+                trip_state.preferences.pace_preferences = StructuredTripPace(
+                    pace=parsed_pace,
+                    preference_source=PacePreferenceSource.USER_EXPLICIT,
+                    raw_pace_phrase=requested_pace,
+                    summary_label=f"{parsed_pace.value.capitalize()} Pace",
+                    description=(
+                        "High sightseeing density with 3-4 attractions per day and tighter scheduling."
+                        if parsed_pace == TripPace.RUSHED
+                        else (
+                            "Relaxed pace with 1-2 attractions per day, longer visits, and generous free time."
+                            if parsed_pace == TripPace.SLOW
+                            else "Comfortable pacing with 2-3 attractions per day, meal breaks, and downtime."
+                        )
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Could not apply requested pace override '%s': %s", requested_pace, e)
+
         await emit("understanding", "Trip details understood.", {"trip_state": trip_state.model_dump(mode='json')})
         
         # Check clarification question from Gemini
@@ -268,28 +316,40 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
             
         # 2. Flight Research
         await emit("flight_research", "Searching for flights...")
-        flight_context = trip_state.model_dump_json(include={"origin", "destination", "departure_date", "return_date", "travelers", "preferences", "hard_constraints"})
+        flight_context = trip_state.model_dump_json(include={"origin", "destination", "departure_date", "return_date", "travelers", "budget", "preferences", "hard_constraints"})
         flight_agent = FlightResearchAgent(coordinator.llm)
         try:
             flight_summary = await flight_agent.run(f"Find flights for the trip. Context: {flight_context}", authorizer, tool_executor)
         except Exception as e:  # noqa: BLE001
-            flight_summary = f"Flight research failed: {e!s}"
-            provider_statuses[Capability.FLIGHTS.value] = ProviderResultStatus(capability=Capability.FLIGHTS, status=ProviderStatus.ERROR, error_detail=str(e))
+            if provider_data.get("flights"):
+                flight_summary = f"Flight options retrieved ({len(provider_data['flights'])} options), but agent interpretation failed: {e!s}"
+            else:
+                flight_summary = f"Flight research failed: {e!s}"
+                provider_statuses[Capability.FLIGHTS.value] = ProviderResultStatus(capability=Capability.FLIGHTS, status=ProviderStatus.ERROR, error_detail=str(e))
         if Capability.FLIGHTS.value not in provider_statuses:
-            provider_statuses[Capability.FLIGHTS.value] = ProviderResultStatus(capability=Capability.FLIGHTS, status=ProviderStatus.NOT_REQUESTED)
+            provider_statuses[Capability.FLIGHTS.value] = ProviderResultStatus(
+                capability=Capability.FLIGHTS,
+                status=ProviderStatus.SUCCESS if provider_data.get("flights") else ProviderStatus.NOT_REQUESTED,
+            )
         await emit("flight_research", "Flights evaluated")
         
         # 3. Hotel Research
         await emit("hotel_research", "Searching for hotels...")
-        hotel_context = trip_state.model_dump_json(include={"destination", "departure_date", "return_date", "travelers", "rooms", "preferences", "hard_constraints"})
+        hotel_context = trip_state.model_dump_json(include={"destination", "departure_date", "return_date", "travelers", "rooms", "budget", "preferences", "hard_constraints"})
         hotel_agent = HotelResearchAgent(coordinator.llm)
         try:
             hotel_summary = await hotel_agent.run(f"Find hotels for the trip. Context: {hotel_context}", authorizer, tool_executor)
         except Exception as e:  # noqa: BLE001
-            hotel_summary = f"Hotel research failed: {e!s}"
-            provider_statuses[Capability.HOTELS.value] = ProviderResultStatus(capability=Capability.HOTELS, status=ProviderStatus.ERROR, error_detail=str(e))
+            if provider_data.get("hotels"):
+                hotel_summary = f"Hotel options retrieved ({len(provider_data['hotels'])} options), but agent interpretation failed: {e!s}"
+            else:
+                hotel_summary = f"Hotel research failed: {e!s}"
+                provider_statuses[Capability.HOTELS.value] = ProviderResultStatus(capability=Capability.HOTELS, status=ProviderStatus.ERROR, error_detail=str(e))
         if Capability.HOTELS.value not in provider_statuses:
-            provider_statuses[Capability.HOTELS.value] = ProviderResultStatus(capability=Capability.HOTELS, status=ProviderStatus.NOT_REQUESTED)
+            provider_statuses[Capability.HOTELS.value] = ProviderResultStatus(
+                capability=Capability.HOTELS,
+                status=ProviderStatus.SUCCESS if provider_data.get("hotels") else ProviderStatus.NOT_REQUESTED,
+            )
         await emit("hotel_research", "Hotels evaluated")
         
         # 4. Attractions
@@ -299,17 +359,30 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
             places_ctx["destination_coordinates"] = dest_coords.model_dump()
         places_context = json.dumps(places_ctx)
         places_agent = PlacesAndActivitiesAgent(coordinator.llm)
+
+        recommended_cats = recommend_search_categories(trip_state.preferences.attraction_preferences)
+        cats_repr = ", ".join(f"'{c}'" for c in recommended_cats)
+        explicit_hint = ""
+        if trip_state.preferences.attraction_preferences.preference_source == AttractionPreferenceSource.USER_EXPLICIT:
+            explicit_hint = f" The user explicitly requested: {', '.join(trip_state.preferences.attraction_preferences.primary_interests)}. Prioritize these interests."
+
+        coord_hint = ""
+        if dest_coords:
+            coord_hint = f" Use destination coordinates {dest_coords.model_dump()} as the 'center' coordinate object (do not pass destination name as string)."
+
         places_prompt = (
-            f"Find attractions and points of interest for the destination. "
+            f"Find attractions and points of interest for the destination.{explicit_hint}{coord_hint} "
             f"In your first search, batch the most useful attraction categories together in a single call "
-            f"(e.g. categories=['tourism.sights', 'tourism.attraction', 'heritage', 'leisure.park', 'entertainment.culture']). "
+            f"(e.g. categories=[{cats_repr}]). "
             f"Context: {places_context}"
         )
         try:
             places_summary = await places_agent.run(places_prompt, authorizer, tool_executor)
         except Exception as e:  # noqa: BLE001
-            places_summary = f"Attractions research failed: {e!s}"
-            if not provider_data.get("places"):
+            if provider_data.get("places"):
+                places_summary = f"Attractions retrieved ({len(provider_data['places'])} options), but agent interpretation failed: {e!s}"
+            else:
+                places_summary = f"Attractions research failed: {e!s}"
                 provider_statuses[Capability.PLACES.value] = ProviderResultStatus(capability=Capability.PLACES, status=ProviderStatus.ERROR, error_detail=str(e))
         if Capability.PLACES.value not in provider_statuses:
             provider_statuses[Capability.PLACES.value] = ProviderResultStatus(
@@ -343,12 +416,28 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
         weather_context = json.dumps(weather_ctx)
         
         days_ahead = (trip_state.departure_date - date.today()).days if trip_state.departure_date else 0
+        seasonal_weather: SeasonalWeatherEstimate | None = None
+        travel_month = trip_state.departure_date.strftime("%B") if trip_state.departure_date else None
+
         if days_ahead > 5:
-            weather_summary = f"Weather forecast is unavailable for dates more than 5 days in the future (requested: {trip_state.departure_date})."
+            weather_summary = (
+                f"Date-specific weather forecast is unavailable for dates more than 5 days in the future (requested: {trip_state.departure_date}). "
+                f"Historical climate normals source is not configured; seasonal estimates are unavailable to avoid fabricating unverified climate data."
+            )
             provider_statuses[Capability.WEATHER.value] = ProviderResultStatus(
                 capability=Capability.WEATHER, 
                 status=ProviderStatus.UNAVAILABLE, 
-                error_detail="Dates exceed the 5-day forecast horizon."
+                error_detail="Dates exceed the 5-day forecast horizon; seasonal climate data source not configured."
+            )
+            seasonal_weather = SeasonalWeatherEstimate(
+                status="forecast_and_seasonal_unavailable",
+                destination=trip_state.destination or "Destination",
+                travel_month=travel_month,
+                disclaimer="Typical weather for this time of year, never an actual date-specific forecast.",
+                notes=[
+                    f"Requested travel date ({trip_state.departure_date}) exceeds the OpenWeather 5-day forecast horizon.",
+                    "No verified historical climatological normals source is configured in the environment; seasonal estimate unavailable.",
+                ],
             )
         else:
             weather_kind = "current" if trip_state.departure_date == date.today() else "forecast"
@@ -359,9 +448,22 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
                     authorizer,
                     tool_executor,
                 )
+                seasonal_weather = SeasonalWeatherEstimate(
+                    status="forecast_available",
+                    destination=trip_state.destination or "Destination",
+                    travel_month=travel_month,
+                    disclaimer="Date-specific weather forecast retrieved from OpenWeather.",
+                    notes=["Active date-specific forecast obtained from provider."],
+                )
             except Exception as e:  # noqa: BLE001
                 weather_summary = f"Weather check failed: {e!s}"
                 provider_statuses[Capability.WEATHER.value] = ProviderResultStatus(capability=Capability.WEATHER, status=ProviderStatus.ERROR, error_detail=str(e))
+                seasonal_weather = SeasonalWeatherEstimate(
+                    status="forecast_and_seasonal_unavailable",
+                    destination=trip_state.destination or "Destination",
+                    travel_month=travel_month,
+                    notes=[f"Weather check error: {e!s}"],
+                )
             if Capability.WEATHER.value not in provider_statuses:
                 provider_statuses[Capability.WEATHER.value] = ProviderResultStatus(capability=Capability.WEATHER, status=ProviderStatus.NOT_REQUESTED)
             
@@ -380,9 +482,18 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
         await emit("synthesis", "Preparing final itinerary...")
         synthesis_agent = ItinerarySynthesisAgent(coordinator.synthesis_llm)
         
+        hotel_coords = [h.coordinate for h in provider_data.get("hotels", []) if getattr(h, "coordinate", None)]
+        center_coord = hotel_coords[0] if hotel_coords else dest_coords
+        scored_places = rank_attractions(
+            provider_data.get("places", []),
+            trip_state.preferences.attraction_preferences,
+            center=center_coord,
+        )
+        ranked_places_for_synthesis = [sp.place for sp in scored_places]
+
         s_flights = json.dumps([summarize_flight_item(f) for f in provider_data.get("flights", [])[:3]])
         s_hotels = json.dumps([summarize_hotel_item(h) for h in provider_data.get("hotels", [])[:3]])
-        s_places = json.dumps([summarize_place_item(p) for p in provider_data.get("places", [])[:5]])
+        s_places = json.dumps([summarize_place_item(p) for p in ranked_places_for_synthesis[:5]])
         
         dep_date = trip_state.departure_date
         ret_date = trip_state.return_date or dep_date
@@ -393,10 +504,12 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
             or provider_statuses[Capability.PLACES.value].status == ProviderStatus.SUCCESS
         )
 
+        pace_label = getattr(trip_state.preferences.pace, "value", "BALANCED")
         trip_dates_info = (
             f"Trip: from {trip_state.origin or 'Origin'} to {trip_state.destination or 'Destination'}. "
             f"Departure Date: {dep_date}. Return Date: {ret_date}. "
             f"Total Duration: {calendar_days} calendar day(s). "
+            f"Trip Pace: {pace_label}. "
         )
         if not places_available:
             trip_dates_info += (
@@ -488,6 +601,7 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
             provider_statuses=provider_statuses,
             data_notes=package_data_notes,
             hotel_names=hotel_names,
+            raw_places=provider_data["places"],
         )
 
         # Trusted state used later to validate option selection by ID
@@ -495,6 +609,7 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
         session.packages = {p.package_id: p for p in packages}
         session.base_day_wise = day_wise
         session.hotel_names = hotel_names
+        session.raw_places = provider_data["places"]
 
         # Create StructuredItinerary
         itinerary = StructuredItinerary(
@@ -507,6 +622,7 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
             validation_warnings=val_warnings,
             packages=packages,
             package_notes=package_notes,
+            seasonal_weather=seasonal_weather,
         )
         
         # Packages travel once, inside the itinerary payload.
@@ -516,7 +632,22 @@ async def run_planning_workflow(session_id: str, request_text: str, existing_sta
         })
         
     except Exception as e:  # noqa: BLE001
-        await emit("error", f"An error occurred: {e!s}")
+        logger.exception("Planning workflow failed for session %s: %s", session_id, e)
+        err_type = type(e).__name__
+        err_str = str(e).strip()
+        sanitized = re.sub(
+            r'(api[_-]?key|secret|token|password|auth|bearer)\s*[:=]\s*([^\s,;&]+)',
+            r'\1=***',
+            err_str,
+            flags=re.IGNORECASE,
+        )
+        if not sanitized:
+            user_msg = f"An error occurred during planning ({err_type})."
+        elif len(sanitized.split()) == 1 and err_type in ("AttributeError", "KeyError", "NameError", "TypeError"):
+            user_msg = f"An internal error occurred during planning ({err_type}: {sanitized})."
+        else:
+            user_msg = f"An error occurred: {sanitized}"
+        await emit("error", user_msg)
     finally:
         session.completed = True
         await session.queue.put(None)
@@ -526,7 +657,7 @@ async def start_planning(req: PlanRequest, background_tasks: BackgroundTasks, co
     _prune_sessions()
     session_id = str(uuid.uuid4())
     sessions[session_id] = SessionState()
-    background_tasks.add_task(run_planning_workflow, session_id, req.request, req.existing_state, coordinator)
+    background_tasks.add_task(run_planning_workflow, session_id, req.request, req.existing_state, coordinator, req.pace)
     return {"session_id": session_id}
 
 @router.get("/plan/{session_id}/stream")

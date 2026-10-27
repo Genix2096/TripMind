@@ -9,6 +9,7 @@ from app.models.day_plan import Activity, DayPlan  # noqa: F401  (re-exported fo
 from app.models.flights import FlightOption
 from app.models.hotels import HotelOption
 from app.models.packages import TravelPackage
+from app.models.weather import SeasonalWeatherEstimate
 
 
 class ProviderStatus(str, Enum):
@@ -40,3 +41,4 @@ class StructuredItinerary(BaseModel):
     validation_warnings: list[str] = Field(default_factory=list)
     packages: list[TravelPackage] = Field(default_factory=list)
     package_notes: list[str] = Field(default_factory=list)
+    seasonal_weather: SeasonalWeatherEstimate | None = None

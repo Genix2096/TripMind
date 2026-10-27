@@ -10,8 +10,11 @@ class FlightResearchAgent(Agent):
     @property
     def system_prompt(self) -> str:
         return (
-            "You are the Flight Research Agent. Your job is to search for flights using the provided tool, "
+            "You are the Flight Research Agent. Your job is to search for flights using the search_flights tool, "
             "compare the candidates, evaluate their price, duration, stops, and schedule, and return a structured summary. "
+            "CRITICAL: Always use standard 3-letter IATA airport/city codes (e.g. BOM for Mumbai, BKK for Bangkok, "
+            "JFK for New York, LHR for London) for both 'origin' and 'destination'. "
+            "Use the currency matching the user's budget if specified (e.g. 'INR'). "
             "Do not invent flights. Use only the results returned by the search tool."
         )
 

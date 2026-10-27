@@ -1,6 +1,6 @@
 import React from 'react';
 import type { BudgetReport, Money } from '../types';
-import { CheckCircle, AlertTriangle, HelpCircle, ShieldCheck, DollarSign } from 'lucide-react';
+import { HelpCircle, ShieldCheck, DollarSign } from 'lucide-react';
 
 interface BudgetBreakdownProps {
   report: BudgetReport;
@@ -78,7 +78,18 @@ export const BudgetBreakdown: React.FC<BudgetBreakdownProps> = ({
         <div className="text-right">
           <div className="text-xs text-gray-500 dark:text-gray-400">Total Quoted Cost</div>
           <div className="text-xl font-extrabold text-gray-900 dark:text-gray-100">
-            {formatCurrency(totalCost?.amount, currency)}
+            {totalCost?.amount ? (
+              formatCurrency(totalCost.amount, totalCost.currency || currency)
+            ) : report.known_subtotal?.amount ? (
+              <div>
+                <span className="text-amber-600 dark:text-amber-400 text-sm font-bold block">
+                  Known so far: {formatCurrency(report.known_subtotal.amount, report.known_subtotal.currency || currency)}
+                </span>
+                <span className="text-xs block text-gray-400 font-normal">Price incomplete</span>
+              </div>
+            ) : (
+              <span className="text-amber-500 text-sm font-medium">Price incomplete</span>
+            )}
           </div>
         </div>
       </div>
@@ -95,7 +106,16 @@ export const BudgetBreakdown: React.FC<BudgetBreakdownProps> = ({
         <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80">
           <div className="text-xs text-gray-500 dark:text-gray-400">Remaining Budget</div>
           <div className={`text-base font-bold mt-1 ${remainingBudget && Number(remainingBudget.amount) > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'}`}>
-            {remainingBudget ? formatCurrency(remainingBudget.amount, remainingBudget.currency) : '—'}
+            {remainingBudget ? (
+              formatCurrency(remainingBudget.amount, remainingBudget.currency)
+            ) : report.remaining_after_known_costs?.amount ? (
+              <span>
+                {formatCurrency(report.remaining_after_known_costs.amount, report.remaining_after_known_costs.currency || currency)}
+                <span className="text-xs font-normal text-gray-400 block">After known costs</span>
+              </span>
+            ) : (
+              '—'
+            )}
           </div>
         </div>
 
@@ -106,6 +126,15 @@ export const BudgetBreakdown: React.FC<BudgetBreakdownProps> = ({
           </div>
         </div>
       </div>
+
+      {report.missing_categories && report.missing_categories.length > 0 && (
+        <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+          <HelpCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span>
+            <strong>Incomplete pricing components:</strong> {report.missing_categories.join(', ')}. Final budget comparison cannot be determined.
+          </span>
+        </div>
+      )}
 
       {/* Itemized Cost Breakdown Table */}
       <div className="overflow-x-auto">

@@ -11,6 +11,7 @@ from app.models.common import Money
 from app.models.day_plan import DayPlan
 from app.models.flights import FlightOption
 from app.models.hotels import HotelOption
+from app.models.trip import TripPace
 from app.planning.budget import BudgetReport
 
 
@@ -27,6 +28,16 @@ class TravelPackage(BaseModel):
     description: str = Field(description="Short deterministic description of how the package was selected")
     target_tier: str = Field(description="'within_budget', 'over_budget', 'unclassified' or 'incomplete'")
     budget_classification: BudgetClassification = Field(description="Deterministic budget classification")
+
+    # Trip pacing configuration
+    trip_pace: TripPace = Field(
+        default=TripPace.BALANCED,
+        description="Trip pacing level for this package: RUSHED, BALANCED, or SLOW.",
+    )
+    pace_description: str = Field(
+        default="A comfortable mix of sightseeing, breaks, and free time.",
+        description="User-facing explanation of this package's activity density.",
+    )
 
     # Selected primary options
     selected_outbound_flight: FlightOption | None = None

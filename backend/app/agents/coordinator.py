@@ -2,6 +2,8 @@
 import logging
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.agents.weather import WeatherRequest
 from app.core.authorization import SearchAuthorizer, fingerprint
 from app.models.common import Capability, Coordinate, SearchMeta, SearchResult
@@ -97,7 +99,24 @@ class PlanningCoordinator:
                 return compact_res, res, ProviderResultStatus(capability=Capability.HOTELS, status=status)
 
             elif name == "search_places":
-                req = PlacesSearchRequest(**args)
+                try:
+                    req = PlacesSearchRequest(**args)
+                except (ValidationError, ValueError) as ve:
+                    err_msg = (
+                        f"Validation error for search_places: {ve}. "
+                        "The 'center' argument must be an object with numeric 'lat' and 'lon' floats "
+                        "(e.g. {'lat': 35.6762, 'lon': 139.6503}). Do not retry with a string or invalid coordinates."
+                    )
+                    logger.warning("Places search argument validation failed: %s (args=%s)", ve, args)
+                    return (
+                        err_msg,
+                        None,
+                        ProviderResultStatus(
+                            capability=Capability.PLACES,
+                            status=ProviderStatus.ERROR,
+                            error_detail=str(ve),
+                        ),
+                    )
 
                 # Check if identical search was already performed in this run
                 if isinstance(self.places, SerpApiMapsAdapter):

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { TravelPackage, FlightOption, HotelOption } from '../types';
+import type { TravelPackage, FlightOption, HotelOption, SeasonalWeatherEstimate } from '../types';
 import { BudgetBreakdown } from './BudgetBreakdown';
 import {
   ArrowLeft,
@@ -32,6 +32,7 @@ interface PackageDetailsProps {
   isUpdating?: boolean;
   selectionError?: string | null;
   selectionDisabledReason?: string | null;
+  seasonalWeather?: SeasonalWeatherEstimate | null;
 }
 
 const formatCurrency = (amount: number | string | undefined | null, curr: string) => {
@@ -54,6 +55,7 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
   isUpdating = false,
   selectionError = null,
   selectionDisabledReason = null,
+  seasonalWeather = null,
 }) => {
   const selectionLocked = isUpdating || !!selectionDisabledReason;
   const [showOutboundAlts, setShowOutboundAlts] = useState(false);
@@ -111,6 +113,18 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div>
             <div className="flex items-center gap-3 mb-2 flex-wrap">
+              {pkg.is_complete ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-wide uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  Complete Package
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-wide uppercase bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                  Partial Package
+                </span>
+              )}
+
               <span
                 className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-wide uppercase ${
                   isWithinBudget
@@ -139,6 +153,29 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
               <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-white/80 dark:bg-gray-800/80 px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-700">
                 {pkg.day_wise.length} Days Itinerary
               </span>
+
+              {pkg.trip_pace && (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+                    pkg.trip_pace === 'RUSHED'
+                      ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                      : pkg.trip_pace === 'SLOW'
+                      ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                      : 'bg-blue-100 text-blue-900 dark:bg-blue-950/60 dark:text-blue-300 border-blue-300 dark:border-blue-800'
+                  }`}
+                  title={pkg.pace_description || `${pkg.trip_pace} pace`}
+                >
+                  <span>{pkg.trip_pace === 'RUSHED' ? '⚡' : pkg.trip_pace === 'SLOW' ? '🌿' : '⚖️'}</span>
+                  <span>{pkg.trip_pace === 'RUSHED' ? 'Rushed' : pkg.trip_pace === 'SLOW' ? 'Slow' : 'Balanced'} Pace</span>
+                </span>
+              )}
+
+              {pkg.description.includes('Focus:') && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                  Focus: {pkg.description.split('Focus:')[1].trim()}
+                </span>
+              )}
             </div>
 
             <h2 className="text-3xl font-extrabold text-gray-900 dark:text-white leading-tight">
@@ -147,6 +184,12 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
             <p className="text-sm text-gray-600 dark:text-gray-300 mt-2 max-w-2xl leading-relaxed">
               {pkg.description}
             </p>
+            {pkg.pace_description && (
+              <div className="mt-2.5 inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 bg-white/70 dark:bg-gray-800/70 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-gray-700/80">
+                <span className="font-bold text-gray-800 dark:text-gray-200">Daily Density:</span>
+                <span>{pkg.pace_description}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row lg:flex-col items-start lg:items-end gap-3 shrink-0">
@@ -159,7 +202,7 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
               </span>
               {!pkg.total_cost && pkg.known_subtotal && (
                 <span className="text-xs text-amber-600 dark:text-amber-400 mt-1 block">
-                  Known so far: {formatCurrency(pkg.known_subtotal.amount, pkg.currency)} (incomplete)
+                  Known so far: {formatCurrency(pkg.known_subtotal.amount, pkg.known_subtotal.currency || pkg.currency)} (incomplete)
                 </span>
               )}
               {isWithinBudget && pkg.remaining_budget && Number(pkg.remaining_budget.amount) > 0 && (
@@ -270,7 +313,10 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
                     {outFlight.segments[outFlight.segments.length - 1]?.arrival?.code ?? '?'}
                   </span>
                   <span className="text-gray-600 dark:text-gray-300 block">
-                    {outFlight.segments[outFlight.segments.length - 1]?.arrival?.local_time ? new Date(outFlight.segments[outFlight.segments.length - 1].arrival.local_time).toLocaleString() : 'Time not specified'}
+                    {(() => {
+                      const t = outFlight.segments[outFlight.segments.length - 1]?.arrival?.local_time;
+                      return t ? new Date(t).toLocaleString() : 'Time not specified';
+                    })()}
                   </span>
                 </div>
                 <div>
@@ -348,25 +394,24 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
         </div>
 
         {/* 2. Return Flight Box */}
-        {retFlight && (
-          <div className="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-xl bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400">
-                    <Plane className="w-5 h-5 rotate-180" />
+        <div className="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${retFlight ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400' : 'bg-gray-100 dark:bg-gray-750 text-gray-400'}`}>
+                  <Plane className="w-5 h-5 rotate-180" />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Selected Return Flight
                   </div>
-                  <div>
-                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Selected Return Flight
-                    </div>
-                    <div className="text-base font-bold text-gray-900 dark:text-gray-100">
-                      {retFlight.segments[0]?.airline || 'Flight'}{' '}
-                      {retFlight.segments[0]?.flight_number}
-                    </div>
+                  <div className="text-base font-bold text-gray-900 dark:text-gray-100">
+                    {retFlight ? `${retFlight.segments[0]?.airline || 'Flight'} ${retFlight.segments[0]?.flight_number}` : 'Return Flight Unavailable'}
                   </div>
                 </div>
+              </div>
 
+              {retFlight && (
                 <div className="text-right">
                   <div className="text-base font-extrabold text-gray-900 dark:text-gray-100">
                     {retFlight.price ? formatCurrency(retFlight.price.amount, retFlight.price.currency) : 'Price unknown'}
@@ -375,8 +420,10 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
                     {retFlight.stops === 0 ? 'Nonstop' : `${retFlight.stops} stop(s)`}
                   </div>
                 </div>
-              </div>
+              )}
+            </div>
 
+            {retFlight ? (
               <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-750/50 border border-gray-100 dark:border-gray-700 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                 <div>
                   <span className="text-gray-500 block">Departure</span>
@@ -393,7 +440,10 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
                     {retFlight.segments[retFlight.segments.length - 1]?.arrival?.code ?? '?'}
                   </span>
                   <span className="text-gray-600 dark:text-gray-300 block">
-                    {retFlight.segments[retFlight.segments.length - 1]?.arrival?.local_time ? new Date(retFlight.segments[retFlight.segments.length - 1].arrival.local_time).toLocaleString() : 'Time not specified'}
+                    {(() => {
+                      const t = retFlight.segments[retFlight.segments.length - 1]?.arrival?.local_time;
+                      return t ? new Date(t).toLocaleString() : 'Time not specified';
+                    })()}
                   </span>
                 </div>
                 <div>
@@ -406,65 +456,69 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
                   </span>
                 </div>
               </div>
-
-              {/* Return Alternatives Toggle */}
-              {pkg.return_flight_alternatives.length > 0 && (
-                <button
-                  onClick={() => setShowReturnAlts(!showReturnAlts)}
-                  className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
-                >
-                  <span>
-                    {showReturnAlts ? 'Hide' : 'View'} Return Alternatives ({pkg.return_flight_alternatives.length} available)
-                  </span>
-                  {showReturnAlts ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-              )}
-            </div>
-
-            {/* Return Alternatives List */}
-            {showReturnAlts && pkg.return_flight_alternatives.length > 0 && (
-              <div className="p-6 pt-0 border-t border-gray-100 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/40 space-y-3">
-                <h5 className="text-xs font-bold text-gray-500 uppercase tracking-wider pt-4">
-                  Available Alternative Return Flights
-                </h5>
-                <div className="grid gap-3">
-                  {pkg.return_flight_alternatives.map((alt) => (
-                    <div
-                      key={alt.option_id}
-                      className="p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                    >
-                      <div>
-                        <div className="font-bold text-sm text-gray-900 dark:text-gray-100">
-                          {alt.segments[0]?.airline || 'Flight'} {alt.segments[0]?.flight_number}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                          <span>{alt.segments[0]?.departure?.code ?? '?'} → {alt.segments[alt.segments.length - 1]?.arrival?.code ?? '?'}</span>
-                          <span>• {alt.stops === 0 ? 'Nonstop' : `${alt.stops} stop`}</span>
-                          {alt.total_duration_minutes && <span>• {Math.floor(alt.total_duration_minutes / 60)}h {alt.total_duration_minutes % 60}m</span>}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4 self-end sm:self-auto">
-                        <div className="text-right">
-                          <div className="font-extrabold text-sm text-gray-900 dark:text-gray-100">
-                            {alt.price ? formatCurrency(alt.price.amount, alt.price.currency) : 'Price unknown'}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => onSelectReturnFlight(pkg.package_id, alt)}
-                          disabled={selectionLocked}
-                          className="px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800/60 text-xs font-bold transition-colors flex items-center gap-1"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Select Option
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 italic">
+                No usable return flights returned by provider.
               </div>
             )}
+
+            {/* Return Alternatives Toggle */}
+            {pkg.return_flight_alternatives.length > 0 && (
+              <button
+                onClick={() => setShowReturnAlts(!showReturnAlts)}
+                className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+              >
+                <span>
+                  {showReturnAlts ? 'Hide' : 'View'} Return Alternatives ({pkg.return_flight_alternatives.length} available)
+                </span>
+                {showReturnAlts ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
           </div>
-        )}
+
+          {/* Return Alternatives List */}
+          {showReturnAlts && pkg.return_flight_alternatives.length > 0 && (
+            <div className="p-6 pt-0 border-t border-gray-100 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/40 space-y-3">
+              <h5 className="text-xs font-bold text-gray-500 uppercase tracking-wider pt-4">
+                Available Alternative Return Flights
+              </h5>
+              <div className="grid gap-3">
+                {pkg.return_flight_alternatives.map((alt) => (
+                  <div
+                    key={alt.option_id}
+                    className="p-4 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div>
+                      <div className="font-bold text-sm text-gray-900 dark:text-gray-100">
+                        {alt.segments[0]?.airline || 'Flight'} {alt.segments[0]?.flight_number}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
+                        <span>{alt.segments[0]?.departure?.code ?? '?'} → {alt.segments[alt.segments.length - 1]?.arrival?.code ?? '?'}</span>
+                        <span>• {alt.stops === 0 ? 'Nonstop' : `${alt.stops} stop`}</span>
+                        {alt.total_duration_minutes && <span>• {Math.floor(alt.total_duration_minutes / 60)}h {alt.total_duration_minutes % 60}m</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 self-end sm:self-auto">
+                      <div className="text-right">
+                        <div className="font-extrabold text-sm text-gray-900 dark:text-gray-100">
+                          {alt.price ? formatCurrency(alt.price.amount, alt.price.currency) : 'Price unknown'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => onSelectReturnFlight(pkg.package_id, alt)}
+                        disabled={selectionLocked}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800/60 text-xs font-bold transition-colors flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" /> Select Option
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* 3. Hotel Box */}
         <div className="rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
@@ -607,16 +661,130 @@ export const PackageDetails: React.FC<PackageDetailsProps> = ({
         currency={pkg.currency}
       />
 
+      {/* Weather & Seasonal Climate Section */}
+      {seasonalWeather && (
+        <div className="p-6 rounded-3xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400">
+                <CloudSun className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                  Weather & Climate Context
+                </h4>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {seasonalWeather.destination}
+                  {seasonalWeather.travel_month ? ` • ${seasonalWeather.travel_month}` : ''}
+                  {seasonalWeather.season_name ? ` (${seasonalWeather.season_name})` : ''}
+                </p>
+              </div>
+            </div>
+
+            {seasonalWeather.status === 'forecast_available' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1.5">
+                <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                Date-Specific Forecast Available
+              </span>
+            ) : seasonalWeather.status === 'forecast_unavailable_seasonal_available' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-300 dark:border-sky-800 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                Historical Seasonal Estimate
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                Forecast & Seasonal Data Unavailable
+              </span>
+            )}
+          </div>
+
+          {seasonalWeather.status === 'forecast_unavailable_seasonal_available' && (
+            <div className="p-4 rounded-xl bg-sky-50/60 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900/40 text-xs space-y-2">
+              <div className="font-semibold text-sky-900 dark:text-sky-200">
+                {seasonalWeather.disclaimer || 'Typical weather for this time of year (historical estimate, not a date-specific prediction)'}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-gray-700 dark:text-gray-300">
+                {seasonalWeather.typical_temp_min_c !== undefined && seasonalWeather.typical_temp_max_c !== undefined && (
+                  <div><strong>Historical Temperatures:</strong> {seasonalWeather.typical_temp_min_c}°C – {seasonalWeather.typical_temp_max_c}°C</div>
+                )}
+                {seasonalWeather.precipitation_context && (
+                  <div className="sm:col-span-2"><strong>Rainfall Context:</strong> {seasonalWeather.precipitation_context}</div>
+                )}
+              </div>
+              {seasonalWeather.seasonal_caveats && seasonalWeather.seasonal_caveats.length > 0 && (
+                <div className="pt-1 text-amber-700 dark:text-amber-300">
+                  <strong>Caveats:</strong> {seasonalWeather.seasonal_caveats.join(' • ')}
+                </div>
+              )}
+              {(seasonalWeather.data_source || seasonalWeather.reference_period) && (
+                <div className="text-[11px] text-gray-500 dark:text-gray-400 pt-1 border-t border-sky-100 dark:border-sky-900/40">
+                  Source: {seasonalWeather.data_source || 'Historical records'}{seasonalWeather.reference_period ? ` (${seasonalWeather.reference_period})` : ''}
+                </div>
+              )}
+            </div>
+          )}
+
+          {seasonalWeather.status === 'forecast_and_seasonal_unavailable' && (
+            <div className="p-4 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 text-xs text-amber-800 dark:text-amber-200 space-y-1.5">
+              <div className="font-bold">Forecast Horizon Exceeded & Climatology Unavailable</div>
+              {seasonalWeather.notes && seasonalWeather.notes.length > 0 && (
+                <ul className="list-disc list-inside space-y-1">
+                  {seasonalWeather.notes.map((note, nIdx) => (
+                    <li key={nIdx}>{note}</li>
+                  ))}
+                </ul>
+              )}
+              {seasonalWeather.disclaimer && (
+                <div className="text-[11px] text-amber-700 dark:text-amber-300 pt-1">
+                  <em>{seasonalWeather.disclaimer}</em>
+                </div>
+              )}
+            </div>
+          )}
+
+          {seasonalWeather.status === 'forecast_available' && seasonalWeather.notes && (
+            <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 text-xs text-emerald-800 dark:text-emerald-200">
+              {seasonalWeather.notes.join(' • ')}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Day-by-Day Tailored Itinerary */}
       <div className="p-8 rounded-3xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl space-y-6">
         <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
-          <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <Calendar className="w-6 h-6 text-purple-600" />
-            Complete Day-by-Day Itinerary
-          </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Tailored specifically around this package's flight timings and hotel check-in/out
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Calendar className="w-6 h-6 text-purple-600" />
+                Complete Day-by-Day Itinerary
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Tailored specifically around this package's flight timings, hotel check-in/out, and attraction focus
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+              {pkg.trip_pace && (
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border shadow-sm ${
+                  pkg.trip_pace === 'RUSHED'
+                    ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                    : pkg.trip_pace === 'SLOW'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                }`}>
+                  <span>{pkg.trip_pace === 'RUSHED' ? '⚡' : pkg.trip_pace === 'SLOW' ? '🌿' : '⚖️'}</span>
+                  <span>{pkg.trip_pace === 'RUSHED' ? 'Rushed' : pkg.trip_pace === 'SLOW' ? 'Slow' : 'Balanced'} Density</span>
+                </span>
+              )}
+              {pkg.description.includes('Focus:') && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shadow-sm">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                  Focus: {pkg.description.split('Focus:')[1].trim()}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="space-y-6">

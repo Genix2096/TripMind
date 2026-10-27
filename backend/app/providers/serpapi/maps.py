@@ -282,6 +282,7 @@ def _parse_local_result(
     lon = as_float(gps.get("longitude"))
     if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return None
+    coord = Coordinate(lat=lat, lon=lon)
 
     place_id = as_str(d.get("place_id")) or as_str(d.get("data_id"))
     rating = as_float(d.get("rating"))
@@ -322,7 +323,7 @@ def _parse_local_result(
         if val is None
     ]
 
-    coord = Coordinate(lat=lat, lon=lon)
+    desc = as_str(d.get("description")) or as_str(d.get("snippet"))
 
     return Place(
         place_id=place_id,
@@ -336,6 +337,7 @@ def _parse_local_result(
         phone=phone,
         rating=rating,
         reviews_count=reviews_count,
+        description=desc,
         missing_fields=missing_fields,
         provenance=Provenance(
             provider=PROVIDER,

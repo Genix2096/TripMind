@@ -32,12 +32,13 @@ import {
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:8000';
 
 interface TripFormProps {
-  onSubmit: (request: string) => void;
+  onSubmit: (request: string, pace?: 'RUSHED' | 'BALANCED' | 'SLOW') => void;
   isLoading: boolean;
 }
 
 const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
   const [request, setRequest] = useState('');
+  const [pace, setPace] = useState<'RUSHED' | 'BALANCED' | 'SLOW'>('BALANCED');
 
   const samplePrompts = [
     "Plan a 5-day trip to Tokyo next month with a $3,000 budget for 2 adults.",
@@ -75,6 +76,100 @@ const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
           />
         </div>
 
+        {/* Trip Pacing Preference Selector */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+              Trip Pacing & Density
+            </label>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">
+              {pace === 'RUSHED'
+                ? 'High density (3–4 sights/day, packed schedule)'
+                : pace === 'SLOW'
+                ? 'Relaxed pace (1–2 sights/day, 2+ hrs free downtime)'
+                : 'Balanced pacing (2–3 sights/day, comfortable breaks)'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={() => setPace('SLOW')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                pace === 'SLOW'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-800'
+              }`}
+            >
+              <span>🌿</span>
+              <span>Slow Pace</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPace('BALANCED')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                pace === 'BALANCED'
+                  ? 'bg-purple-600 text-white shadow-md'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-800'
+              }`}
+            >
+              <span>⚖️</span>
+              <span>Balanced</span>
+              <span className="text-[10px] opacity-80 font-normal hidden sm:inline">(Default)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPace('RUSHED')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                pace === 'RUSHED'
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-800'
+              }`}
+            >
+              <span>⚡</span>
+              <span>Rushed Pace</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Attraction Interest Chips (Optional Natural Language Helpers) */}
+        <div>
+          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 block mb-1.5">
+            Add Interests (Optional):
+          </span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { label: '🏛️ Heritage & Architecture', text: 'I like historical architecture and heritage sites' },
+              { label: '🌿 Wildlife & Nature', text: 'focused on wildlife sanctuaries and nature' },
+              { label: '🏖️ Beaches & Coastal', text: 'interested in beaches and coastal relaxation' },
+              { label: '🎨 Museums & Art', text: 'love visiting museums and cultural exhibits' },
+              { label: '🍜 Food & Markets', text: 'focused on local cuisine, street food and markets' },
+              { label: '⛰️ Adventure & Outdoors', text: 'keen on outdoor adventure and scenic hikes' },
+            ].map((chip, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => {
+                  setRequest((prev) => {
+                    const trimmed = prev.trim();
+                    if (!trimmed) {
+                      return `Plan a 5-day trip. ${chip.text}.`;
+                    }
+                    if (trimmed.toLowerCase().includes(chip.text.toLowerCase())) {
+                      return trimmed;
+                    }
+                    const cleanEnd = trimmed.replace(/[.,;]+$/, '');
+                    return `${cleanEnd}. ${chip.text}.`;
+                  });
+                }}
+                className="text-[11px] px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 transition-colors"
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Suggestion Chips */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-semibold text-gray-400">Suggestions:</span>
@@ -91,7 +186,7 @@ const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
         </div>
 
         <button
-          onClick={() => onSubmit(request)}
+          onClick={() => onSubmit(request, pace)}
           disabled={!request.trim() || isLoading}
           className="w-full py-4 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-700 hover:via-indigo-700 hover:to-blue-700 text-white font-bold text-base shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
@@ -204,6 +299,8 @@ export default function App() {
     setPackages([]);
     setItinerary(null);
     setPackageNotes([]);
+    setTripState(null);
+    setTripStateForClarification(null);
     setSessionId(null);
     setSelectedPackageId(null);
     setSelectionError(null);
@@ -245,10 +342,16 @@ export default function App() {
     setIsComplete(true);
   };
 
-  const handleSubmit = async (request: string, existingState: any = null) => {
+  const handleSubmit = async (
+    request: string,
+    existingState: any = null,
+    requestedPace: 'RUSHED' | 'BALANCED' | 'SLOW' = 'BALANCED'
+  ) => {
     setIsLoading(true);
     if (!existingState) {
       setEvents([]);
+      setTripState(null);
+      setTripStateForClarification(null);
     }
     setIsComplete(false);
     // A new search replaces all stored results so stale selections can never mix with the new trip.
@@ -271,6 +374,7 @@ export default function App() {
         body: JSON.stringify({
           request,
           existing_state: existingState ? JSON.stringify(existingState) : null,
+          pace: requestedPace,
         }),
       });
 
@@ -449,7 +553,7 @@ export default function App() {
       {/* Main Container */}
       <main className="max-w-7xl mx-auto">
         {/* Form View when no result */}
-        {!hasResult && <TripForm onSubmit={handleSubmit} isLoading={isLoading} />}
+        {!hasResult && <TripForm onSubmit={(req, pace) => handleSubmit(req, null, pace)} isLoading={isLoading} />}
 
         {/* Progress & Clarification During Run */}
         {events.length > 0 && !hasResult && (
@@ -508,13 +612,47 @@ export default function App() {
               <div className="space-y-8 animate-in fade-in duration-300">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
                   <div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 rounded-full text-xs font-black bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase tracking-wider">
-                        {packages.length} {packages.length === 1 ? 'Package' : 'Packages'} Ready
-                      </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {packages.every((p) => p.is_complete) ? (
+                        <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 uppercase tracking-wider">
+                          {packages.length} {packages.length === 1 ? 'Package' : 'Packages'} Ready
+                        </span>
+                      ) : (
+                        <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800 uppercase tracking-wider">
+                          {packages.some((p) => p.is_complete)
+                            ? `${packages.filter((p) => p.is_complete).length} of ${packages.length} Packages Ready`
+                            : 'Partial Package Generated (Components Incomplete)'}
+                        </span>
+                      )}
                       <span className="text-xs text-gray-500">
                         Destination: <strong className="text-gray-800 dark:text-gray-200">{tripState?.destination || 'Requested'}</strong>
                       </span>
+                      {/* Detected Attraction Preferences Summary */}
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+                        tripState?.preferences?.attraction_preferences?.preference_source === 'explicitly_stated'
+                          ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200 border border-amber-300 dark:border-amber-800'
+                          : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
+                      }`}>
+                        <Sparkles className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                        {tripState?.preferences?.attraction_preferences?.summary_label ||
+                          (tripState?.preferences?.interests && tripState.preferences.interests.length > 0
+                            ? `Your interests: ${tripState.preferences.interests.join(', ')}`
+                            : 'Balanced selection of popular local attractions')}
+                      </span>
+
+                      {/* Detected Trip Pace Summary */}
+                      {(tripState?.preferences?.pace_preferences || (packages[0] && packages[0].trip_pace)) && (
+                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+                          (tripState?.preferences?.pace_preferences?.pace || packages[0]?.trip_pace) === 'RUSHED'
+                            ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200 border border-amber-300 dark:border-amber-800'
+                            : (tripState?.preferences?.pace_preferences?.pace || packages[0]?.trip_pace) === 'SLOW'
+                            ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800'
+                            : 'bg-indigo-50 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800/60'
+                        }`}>
+                          <span>{(tripState?.preferences?.pace_preferences?.pace || packages[0]?.trip_pace) === 'RUSHED' ? '⚡' : (tripState?.preferences?.pace_preferences?.pace || packages[0]?.trip_pace) === 'SLOW' ? '🌿' : '⚖️'}</span>
+                          <span>{tripState?.preferences?.pace_preferences?.summary_label || `${(tripState?.preferences?.pace_preferences?.pace || packages[0]?.trip_pace || 'Balanced')} Pace`}</span>
+                        </span>
+                      )}
                     </div>
                     <h2 className="text-3xl font-black text-gray-900 dark:text-white mt-1 tracking-tight">
                       Compare Travel Packages
@@ -629,6 +767,7 @@ export default function App() {
                 isUpdating={updatingPackageId === activePackage.package_id}
                 selectionError={selectionError}
                 selectionDisabledReason={selectionDisabledReason}
+                seasonalWeather={itinerary?.seasonal_weather}
               />
             )}
           </div>

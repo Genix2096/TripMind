@@ -35,7 +35,13 @@ export const isPackage = (p: any): p is TravelPackage =>
   Array.isArray(p.warnings);
 
 /** Keep only well-formed packages; anything from an older/incompatible shape is dropped. */
-export const sanitizePackages = (v: unknown): TravelPackage[] => (Array.isArray(v) ? v.filter(isPackage) : []);
+export const sanitizePackages = (v: unknown): TravelPackage[] =>
+  Array.isArray(v)
+    ? v.filter(isPackage).map((p) => ({
+        ...p,
+        trip_pace: p.trip_pace || 'BALANCED',
+      }))
+    : [];
 
 const stringArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
 

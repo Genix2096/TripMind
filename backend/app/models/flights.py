@@ -27,7 +27,7 @@ class TravelClass(str, Enum):
 
 class FlightSearchRequest(BaseModel):
     origin: str = Field(description="IATA airport/city code (e.g. MAA) or kgmid (/m/...)")
-    destination: str
+    destination: str = Field(description="IATA airport/city code (e.g. BKK, LHR) or kgmid (/m/...)")
     outbound_date: date
     return_date: date | None = None
     adults: int = Field(default=1, ge=1, le=9)
@@ -54,10 +54,39 @@ class FlightSearchRequest(BaseModel):
         v = v.strip()
         if v.startswith(("/m/", "/g/")):
             return v
-        v = v.upper()
-        if not (len(v) == 3 and v.isalpha()):
-            raise ValueError("must be a 3-letter IATA code or a kgmid such as /m/0f2v0")
-        return v
+        v_upper = v.upper()
+        # Normalization map for common city names to prevent tool validation errors
+        CITY_MAP = {
+            "MUMBAI": "BOM", "BOMBAY": "BOM",
+            "BANGKOK": "BKK",
+            "NEW YORK": "JFK", "NYC": "JFK", "NEW YORK CITY": "JFK",
+            "DELHI": "DEL", "NEW DELHI": "DEL",
+            "LONDON": "LHR",
+            "PARIS": "CDG",
+            "TOKYO": "HND",
+            "DUBAI": "DXB",
+            "SINGAPORE": "SIN",
+            "BENGALURU": "BLR", "BANGALORE": "BLR",
+            "CHENNAI": "MAA", "MADRAS": "MAA",
+            "KOLKATA": "CCU", "CALCUTTA": "CCU",
+            "HYDERABAD": "HYD",
+            "GOA": "GOI",
+            "SAN FRANCISCO": "SFO",
+            "LOS ANGELES": "LAX",
+            "CHICAGO": "ORD",
+            "MIAMI": "MIA",
+            "AMSTERDAM": "AMS",
+            "FRANKFURT": "FRA",
+            "SYDNEY": "SYD",
+            "MELBOURNE": "MEL",
+            "ROME": "FCO",
+            "BARCELONA": "BCN",
+        }
+        if v_upper in CITY_MAP:
+            return CITY_MAP[v_upper]
+        if not (len(v_upper) == 3 and v_upper.isalpha()):
+            raise ValueError(f"'{v}' must be a 3-letter IATA code or a kgmid such as /m/0f2v0")
+        return v_upper
 
     @field_validator("currency")
     @classmethod

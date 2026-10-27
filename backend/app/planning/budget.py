@@ -185,39 +185,66 @@ def evaluate_budget(
     reference = limit.currency if limit else next((i.currency for i in items if i.amount is not None and i.currency), None)
 
     summed = Decimal(0)
+    has_reference_items = False
     mismatches: list[CostItem] = []
     known_categories: set[CostCategory] = set()
+    mismatch_by_curr: dict[str, Decimal] = {}
+
     for item in items:
         if item.amount is None or item.cost_class == CostClass.UNKNOWN:
             continue
         if reference is None or item.currency != reference:
             mismatches.append(item)
+            c = item.currency or "UNKNOWN"
+            mismatch_by_curr[c] = mismatch_by_curr.get(c, Decimal(0)) + item.amount
+            known_categories.add(item.category)
             continue
         summed += item.amount
+        has_reference_items = True
         known_categories.add(item.category)
 
     missing = [c for c in expected if c not in known_categories]
-    subtotal = Money(amount=summed, currency=reference) if reference else None
+
+    # Calculate known_subtotal preserving actual verified expenses
+    if has_reference_items:
+        subtotal = Money(amount=summed, currency=reference) if reference else None
+    elif mismatch_by_curr:
+        # No expenses in reference currency, but verified expenses exist in foreign currency (e.g. USD)
+        # Preserve the foreign currency subtotal rather than reporting a misleading 0 in budget currency
+        first_curr, first_amt = next(iter(mismatch_by_curr.items()))
+        subtotal = Money(amount=first_amt, currency=first_curr)
+    else:
+        # Zero verified costs
+        subtotal = None
 
     notes: list[str] = []
     if mismatches:
+        for m in mismatches:
+            notes.append(
+                f"Known {m.label.lower()} cost: {m.amount} {m.currency} (preserved in original currency; "
+                f"exchange rate to {reference or 'budget currency'} is unavailable)."
+            )
         notes.append("Some costs use a different currency than the budget and were not converted or summed.")
     if missing:
         notes.append("Costs for these categories are unknown and are NOT assumed to be zero.")
 
     if limit is None:
         status = BudgetStatus.NO_BUDGET
-    elif summed > limit.amount:
+    elif has_reference_items and summed > limit.amount:
         status = BudgetStatus.EXCEEDED
-        notes.append("The known costs alone already exceed the budget; unknown costs would add to this.")
-    elif missing or mismatches:
+        notes.append("The known costs in budget currency alone already exceed the budget; unknown costs would add to this.")
+    elif missing or mismatches or not has_reference_items:
         status = BudgetStatus.INCOMPLETE
+        notes.append("Budget comparison cannot be determined while costs or currency conversions remain incomplete.")
     else:
         status = BudgetStatus.WITHIN_BUDGET
 
-    remaining = (
-        Money(amount=limit.amount - summed, currency=limit.currency) if limit is not None else None
-    )
+    remaining = None
+    if limit is not None and status == BudgetStatus.WITHIN_BUDGET:
+        remaining = Money(amount=limit.amount - summed, currency=limit.currency)
+    elif limit is not None and status == BudgetStatus.EXCEEDED:
+        remaining = Money(amount=Decimal(0), currency=limit.currency)
+
     return BudgetReport(
         status=status,
         budget_limit=limit,

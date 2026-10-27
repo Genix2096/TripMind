@@ -53,25 +53,114 @@ class Travelers(BaseModel):
         return self.adults + self.children
 
 
-class TravelPace(str, Enum):
-    RELAXED = "relaxed"
-    MODERATE = "moderate"
-    PACKED = "packed"
+class TripPace(str, Enum):
+    RUSHED = "RUSHED"
+    BALANCED = "BALANCED"
+    SLOW = "SLOW"
+
+
+# Backward compatibility alias for older imports
+TravelPace = TripPace
+
+
+class PacePreferenceSource(str, Enum):
+    USER_EXPLICIT = "explicitly_stated"
+    EXPLICITLY_STATED = "explicitly_stated"
+    DEFAULT_BALANCED = "default_balanced"
+    INFERRED = "inferred"
+
+
+class StructuredTripPace(BaseModel):
+    pace: TripPace = Field(
+        default=TripPace.BALANCED,
+        description="Trip pacing preference: RUSHED (high density), BALANCED (moderate mix), or SLOW (relaxed, longer visits).",
+    )
+    preference_source: PacePreferenceSource = Field(
+        default=PacePreferenceSource.DEFAULT_BALANCED,
+        description="Source of pacing preference: 'explicitly_stated', 'inferred', or 'default_balanced'.",
+    )
+    raw_pace_phrase: str | None = Field(
+        default=None,
+        description="Original wording of user's pace preference if explicitly stated.",
+    )
+    summary_label: str = Field(
+        default="Balanced pace: sightseeing and relaxation",
+        description="User-facing summary label for the pace.",
+    )
+    description: str = Field(
+        default="A comfortable mix of sightseeing, breaks, and free time.",
+        description="Detailed description of the pace's itinerary density.",
+    )
+
+
+class AttractionPreferenceSource(str, Enum):
+    USER_EXPLICIT = "explicitly_stated"
+    EXPLICITLY_STATED = "explicitly_stated"
+    DEFAULT_BALANCED = "default_balanced"
+
+
+class StructuredAttractionPreferences(BaseModel):
+    primary_interests: list[str] = Field(
+        default_factory=list,
+        description="Explicit primary attraction interests stated by the user (e.g. heritage, wildlife, nature).",
+    )
+    secondary_interests: list[str] = Field(
+        default_factory=list,
+        description="Explicit secondary or minor attraction interests stated by the user.",
+    )
+    preference_source: AttractionPreferenceSource = Field(
+        default=AttractionPreferenceSource.DEFAULT_BALANCED,
+        description="Source of preferences: 'explicitly_stated' by user or 'default_balanced'.",
+    )
+    raw_interest_phrases: list[str] = Field(
+        default_factory=list,
+        description="Preserved wording of the user's explicit interest expressions.",
+    )
+    summary_label: str = Field(
+        default="Balanced selection of popular local attractions",
+        description="User-facing summary label of the attraction preferences.",
+    )
 
 
 class TripPreferences(BaseModel):
     interests: list[str] = Field(default_factory=list, max_length=20)
+    attraction_preferences: StructuredAttractionPreferences = Field(
+        default_factory=StructuredAttractionPreferences
+    )
     hotel_category: str | None = Field(default=None, max_length=100)
     accommodation_notes: str | None = Field(default=None, max_length=500)
     food_preferences: list[str] = Field(default_factory=list, max_length=20)
     mobility_requirements: str | None = Field(default=None, max_length=500)
-    pace: TravelPace | None = None
+    pace: TripPace = Field(default=TripPace.BALANCED)
+    pace_preferences: StructuredTripPace = Field(default_factory=StructuredTripPace)
     cabin_class: TravelClass | None = None
     preferred_airlines: list[str] = Field(default_factory=list, max_length=10)
     required_activities: list[str] = Field(default_factory=list, max_length=20)
     excluded_activities: list[str] = Field(default_factory=list, max_length=20)
     max_travel_time_minutes: int | None = Field(default=None, ge=10)
     other_constraints: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("pace", mode="before")
+    @classmethod
+    def _coerce_pace(cls, v: Any) -> TripPace:
+        if v is None:
+            return TripPace.BALANCED
+        if isinstance(v, TripPace):
+            return v
+        s = str(v).strip().upper()
+        if s in ("RUSHED", "PACKED", "FAST", "BUSY"):
+            return TripPace.RUSHED
+        if s in ("SLOW", "RELAXED", "LEISURELY", "CHILL"):
+            return TripPace.SLOW
+        if s in ("BALANCED", "MODERATE", "MEDIUM", "COMFORTABLE", "NORMAL"):
+            return TripPace.BALANCED
+        return TripPace.BALANCED
+
+    @model_validator(mode="after")
+    def _sync_pace_preferences(self) -> TripPreferences:
+        if self.pace_preferences.pace != self.pace:
+            self.pace_preferences.pace = self.pace
+        return self
 
 
 class HardConstraints(BaseModel):
